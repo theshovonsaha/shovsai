@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAgent } from './useAgent';
-import { processMarkdown } from './lib/markdown';
+import { RichContentViewer } from './components/RichContentViewer';
 import { Dashboard } from './Dashboard';
 import { LogPanel } from './LogPanel';
 
@@ -145,12 +145,12 @@ function App() {
                   </div>
                 ) : null}
                 {m.role === 'user' && !m.blocks?.length && (
-                  <div dangerouslySetInnerHTML={{ __html: processMarkdown(m.content) }} />
+                  <RichContentViewer content={m.content} />
                 )}
                 {m.blocks?.map(block => {
                   switch (block.type) {
                     case 'text':
-                      return <div key={block.id} dangerouslySetInnerHTML={{ __html: processMarkdown(block.content) }} />;
+                      return <RichContentViewer key={block.id} content={block.content} />;
                     case 'tool_call':
                       return (
                         <div key={block.id} className="tool-event call">

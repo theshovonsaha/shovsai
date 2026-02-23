@@ -74,7 +74,7 @@ async def health():
     return {
         "status":            "ok" if ok else "degraded",
         "ollama":            ok,
-        "compression_model": COMPRESSION_MODEL,
+        "compression_model": DEFAULT_CHAT_MODEL,
         "chat_model":        DEFAULT_CHAT_MODEL,
         "tools":             tool_registry.list_tools(),
     }

@@ -49,11 +49,11 @@ class ToolResult:
     content:   str
 
 
-def _extract_json_objects(text: str) -> list[dict]:
+def _extract_json_objects(text: str) -> list[tuple[dict, str]]:
     """
     Extract all valid JSON objects from text using a brace-counting scanner.
     Handles nested objects, escaped strings — things regex cannot.
-    Returns list of parsed dicts (may be empty).
+    Returns list of (parsed_dict, original_substring) tuples.
     """
     results = []
     i = 0
@@ -89,7 +89,7 @@ def _extract_json_objects(text: str) -> list[dict]:
                         try:
                             parsed = json.loads(candidate)
                             if isinstance(parsed, dict):
-                                results.append(parsed)
+                                results.append((parsed, candidate))
                         except json.JSONDecodeError:
                             pass
                         break
@@ -126,13 +126,35 @@ class ToolRegistry:
         """Inject tool descriptions into system prompt."""
         if not self._tools:
             return ""
-        schemas = json.dumps(self.list_tools(), indent=2)
+            
+        tool_docs = []
+        for t in self._tools.values():
+            params = t.parameters.get("properties", {})
+            required = t.parameters.get("required", [])
+            
+            param_str = []
+            for name, prop in params.items():
+                req_mark = "(REQUIRED)" if name in required else "(optional)"
+                desc = prop.get("description", "")
+                ptype = prop.get("type", "string")
+                param_str.append(f'      "{name}": <{ptype}> {req_mark} - {desc}')
+                
+            args_block = "{\n" + ",\n".join(param_str) + "\n    }" if params else "{}"
+            
+            tool_docs.append(
+                f"  Tool: {t.name}\n"
+                f"  Description: {t.description}\n"
+                f"  Arguments Schema:\n    {args_block}"
+            )
+            
+        doc_string = "\n\n".join(tool_docs)
+
         return (
             "--- Available Tools ---\n"
-            "To use a tool, output ONLY this JSON on its own line and stop:\n"
-            '{"tool": "<tool_name>", "arguments": {<args>}}\n'
-            "Do NOT predict the result. Wait for [Tool result ...] before continuing.\n"
-            f"{schemas}\n"
+            "To use a tool, you MUST output ONLY the following JSON on its own line and then STOP:\n"
+            '{"tool": "<tool_name>", "arguments": {<args>}}\n\n'
+            "CRITICAL: Do NOT output the tool's schema definition. You must output the actual invocation with real values.\n\n"
+            f"{doc_string}\n"
             "--- End Tools ---"
         )
 
@@ -143,7 +165,7 @@ class ToolRegistry:
         Returns first valid tool call found, or None.
         """
         candidates = _extract_json_objects(text)
-        for obj in candidates:
+        for obj, original_text in candidates:
             tool_name = obj.get("tool")
             arguments = obj.get("arguments")
             if (
@@ -152,11 +174,10 @@ class ToolRegistry:
                 and isinstance(arguments, dict)
                 and tool_name in self._tools
             ):
-                raw = json.dumps(obj)
                 return ToolCall(
                     tool_name=tool_name,
                     arguments=arguments,
-                    raw_json=raw,
+                    raw_json=original_text,
                 )
         return None
 

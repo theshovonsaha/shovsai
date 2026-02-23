@@ -39,10 +39,10 @@ DEFAULT_SYSTEM_PROMPT = """\
 You are a thoughtful, capable AI assistant.
 
 Tool use rules:
-- When you need a tool, output ONLY the JSON call on its own line, then STOP immediately.
+- When you need a tool, output ONLY the JSON call on its own line, then STOP.
 - Format: {"tool": "<n>", "arguments": {<args>}}
-- Do NOT write anything after the JSON. Do NOT predict or guess the result.
-- After receiving [Tool result from <n>], answer using that result. Never repeat the tool call.
+- CRITICAL: Never write "Tool result:" or pretend to be the system. You are the ASSISTANT. You CANNOT execute tools yourself.
+- After calling a tool, you must STOP generating text. The system will reply to you with the results.
 
 Memory rules:
 - Session Context contains compressed facts from this active conversation.
@@ -224,16 +224,17 @@ class AgentCore:
     @staticmethod
     def _strip_tool_json(text: str) -> str:
         """Remove tool-call JSON from response text before storing.
-        The model sometimes emits {"tool": ...} inline before writing prose.
+        The model sometimes emits {"tool": ...} inline before writing prose or chains them.
         We need to strip this so session history stays clean."""
         import re
-        # Remove JSON tool calls that appear at the start of the text
-        # Pattern: {"tool": "...", "arguments": {...}}
-        cleaned = re.sub(
-            r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}',
-            '',
-            text
-        ).strip()
+        # Remove ALL JSON tool calls that appear in the text, including sequences 
+        # like `{"tool": "..."}; {"tool": "..."}`
+        cleaned = text
+        pattern = r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}[\n\s;]*'
+        cleaned = re.sub(pattern, '', cleaned).strip()
+        
+        # Sometimes models output standalone semicolons from chained sequences
+        cleaned = re.sub(r'^;+\s*', '', cleaned)
         return cleaned if cleaned else text
 
     def _verify_citations(self, response: str, anchors: list[dict]) -> bool:
@@ -395,9 +396,10 @@ class AgentCore:
             messages.append({
                 "role": "user",
                 "content": (
-                    f"[Tool result from {call.tool_name}]\n"
-                    f"{result.content}\n\n"
-                    f"Now write your response. Do not repeat the {call.tool_name} tool call."
+                    f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
+                    f"{result.content}\n"
+                    f"</SYSTEM_TOOL_RESULT>\n\n"
+                    f"Read the result above and write your response to the user. Do not repeat the JSON tool call."
                     f"{pivot_msg}"
                 ),
             })

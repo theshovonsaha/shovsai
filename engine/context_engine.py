@@ -62,8 +62,8 @@ TRIVIAL_PATTERN = re.compile(
 )
 
 TOOL_RESULT_RE = re.compile(
-    r"\[Tool result from [^\]]+\].*?(?=\n\n|\Z)",
-    re.DOTALL,
+    r"(?:\[Tool result from [^\]]+\].*?(?=\n\n|\Z))|(<SYSTEM_TOOL_RESULT[^>]*>.*?</SYSTEM_TOOL_RESULT>)",
+    re.DOTALL | re.IGNORECASE,
 )
 
 MAX_CONTEXT_LINES  = 80
