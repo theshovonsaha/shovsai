@@ -43,7 +43,7 @@ export function useAgent() {
     const [contextLines, setContextLines] = useState(0);
     const [isStreaming, setIsStreaming] = useState(false);
     const [pendingFiles, setPendingFiles] = useState<Attachment[]>([]);
-    const [forceMemory, setForceMemory] = useState(false);
+    const [forcedTools, setForcedTools] = useState<string[]>([]);
 
     const isSendingRef = useRef(false);
     const bottomRef = useRef<HTMLDivElement>(null);
@@ -160,7 +160,7 @@ export function useAgent() {
             if (activeAgentId) fd.append('agent_id', activeAgentId);
             fd.append('model', currentModel);
             fd.append('search_backend', currentSearchBackend);
-            fd.append('force_memory', forceMemory ? 'true' : 'false');
+            fd.append('forced_tools_json', JSON.stringify(forcedTools));
             filesToSend.forEach(f => fd.append('files', f.file));
 
             const res = await fetch('/api/chat/stream', { method: 'POST', body: fd });
@@ -310,7 +310,8 @@ export function useAgent() {
         currentModel, setCurrentModel,
         currentSearchBackend, setCurrentSearchBackend,
         messages, contextLines,
-        isStreaming, pendingFiles, forceMemory, setForceMemory,
+        isStreaming, pendingFiles,
+        forcedTools, setForcedTools,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,
     };

@@ -4,12 +4,15 @@ import { RichContentViewer } from './components/RichContentViewer';
 import { Dashboard } from './Dashboard';
 import { LogPanel } from './LogPanel';
 import { VoiceControl } from './components/VoiceControl';
+import { PremiumSelect } from './components/PremiumSelect';
 
 function App() {
   const agent = useAgent();
   const [inputText, setInputText] = useState('');
   const [logOpen, setLogOpen] = useState(false);
+  const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const toolBtnRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -63,9 +66,11 @@ function App() {
             ⬡ logs
           </button>
           <span className="model-label">MODEL</span>
-          <select value={agent.currentModel} onChange={e => agent.setCurrentModel(e.target.value)}>
-            {agent.models.map(m => <option key={m} value={m}>{m}</option>)}
-          </select>
+          <PremiumSelect
+            value={agent.currentModel}
+            options={agent.models}
+            onChange={m => agent.setCurrentModel(m)}
+          />
         </div>
       </header>
 
@@ -199,7 +204,14 @@ function App() {
           onDragOver={e => e.preventDefault()}
           onDrop={e => { e.preventDefault(); if (e.dataTransfer.files) agent.addFiles(Array.from(e.dataTransfer.files)); }}
         >
-          <div className={`attach-preview ${agent.pendingFiles.length > 0 ? 'has-files' : ''}`}>
+          <div className={`attach-preview ${(agent.pendingFiles.length > 0 || agent.forcedTools.length > 0) ? 'has-files' : ''}`}>
+            {agent.forcedTools.map(tName => (
+              <div key={`forced-${tName}`} className="attach-chip tool">
+                <span style={{ marginRight: 4 }}>⚙</span>
+                <span className="attach-chip-name">{tName}</span>
+                <span className="attach-chip-remove" onClick={() => agent.setForcedTools(prev => prev.filter(n => n !== tName))}>✕</span>
+              </div>
+            ))}
             {agent.pendingFiles.map(f => (
               <div key={f.id} className={`attach-chip ${f.dataURL ? 'image' : ''}`}>
                 {f.dataURL
@@ -221,19 +233,44 @@ function App() {
               <textarea ref={textareaRef} placeholder="message…" rows={1}
                 value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={handleKeyDown} />
             </div>
+
+            <div className="tool-selector-wrap">
+              <button
+                ref={toolBtnRef}
+                className={`btn-tool-trigger ${toolMenuOpen ? 'active' : ''}`}
+                onClick={() => setToolMenuOpen(!toolMenuOpen)}
+                title="Force specific tools"
+              >
+                ⚙
+              </button>
+              {toolMenuOpen && (
+                <div className="tool-menu">
+                  <div className="tool-menu-head">Force Tool</div>
+                  {agent.tools.map(t => (
+                    <div
+                      key={t.name}
+                      className={`tool-menu-item ${agent.forcedTools.includes(t.name) ? 'selected' : ''}`}
+                      onClick={() => {
+                        agent.setForcedTools(prev =>
+                          prev.includes(t.name) ? prev.filter(n => n !== t.name) : [...prev, t.name]
+                        );
+                        setToolMenuOpen(false);
+                      }}
+                    >
+                      <span className="t-name">{t.name}</span>
+                      <span className="t-desc">{t.description.split('.')[0]}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <label className="btn-attach">⊕<input type="file" multiple style={{ display: 'none' }} onChange={e => e.target.files && agent.addFiles(Array.from(e.target.files))} /></label>
             <button className="btn-send" onClick={handleSend} disabled={agent.isStreaming || (!inputText.trim() && agent.pendingFiles.length === 0)}>Send</button>
           </div>
           <div className="input-footer">
             <span className="input-hint">Enter · Shift+Enter for newline</span>
             <div className="input-controls">
-              <button
-                className={`force-mem-btn ${agent.forceMemory ? 'active' : ''}`}
-                onClick={() => agent.setForceMemory(!agent.forceMemory)}
-                title="Force agent to query long-term memory"
-              >
-                ◈ memory {agent.forceMemory ? 'forced' : 'auto'}
-              </button>
               <span className={`ctx-inline ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>● context {agent.contextLines > 0 ? 'warm' : 'cold'}</span>
             </div>
           </div>

@@ -65,6 +65,9 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
                 while True:
                     msg = await ws.receive()
                     
+                    if msg["type"] == "websocket.disconnect":
+                        raise WebSocketDisconnect(msg.get("code", 1000))
+
                     if "bytes" in msg and msg["bytes"]:
                         # Binary audio data
                         audio_chunks.append(msg["bytes"])
@@ -142,11 +145,15 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
             await ws.send_json({"type": "error", "message": "Config timeout — send config JSON first"})
             await ws.close()
         except Exception as e:
-            log("system", session_id or "voice", f"Voice error: {e}", level="error")
-            try:
-                await ws.send_json({"type": "error", "message": str(e)})
-            except:
-                pass
+            # Don't log "Cannot call receive" as a scary error if we're already shutting down
+            if "receive" in str(e) and "disconnect" in str(e):
+                log("system", session_id or "voice", "Voice WebSocket cleaned up")
+            else:
+                log("system", session_id or "voice", f"Voice error: {e}", level="error")
+                try:
+                    await ws.send_json({"type": "error", "message": str(e)})
+                except:
+                    pass
 
 
 # ── STT Engine ────────────────────────────────────────────────────────────────
@@ -163,6 +170,15 @@ async def _transcribe_audio(audio_bytes: bytes) -> str:
     Falls back to a stub message if faster-whisper is not installed,
     so the rest of the system can still be tested.
     """
+    # 1. Try Groq Cloud STT first (faster, no local model needed)
+    groq_api_key = os.getenv("GROQ_API_KEY")
+    if groq_api_key:
+        try:
+            return await _transcribe_audio_groq(audio_bytes, groq_api_key)
+        except Exception as e:
+            log("system", "voice", f"Groq STT failed, falling back to local: {e}", level="warn")
+
+    # 2. Fallback to local faster-whisper
     global _whisper_model
 
     try:
@@ -200,7 +216,33 @@ async def _transcribe_audio(audio_bytes: bytes) -> str:
     except ImportError:
         # Stub for development: return a message indicating STT isn't installed
         log("system", "system", "faster-whisper not installed — using stub STT", level="warn")
-        return "[STT unavailable — install faster-whisper]"
+        return "[STT unavailable — install faster-whisper or provide GROQ_API_KEY]"
+
+
+async def _transcribe_audio_groq(audio_bytes: bytes, api_key: str) -> str:
+    """Transcribe using Groq Cloud API."""
+    from groq import AsyncGroq
+    import tempfile
+    import os
+
+    client = AsyncGroq(api_key=api_key)
+    
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(audio_bytes)
+        temp_path = f.name
+
+    try:
+        with open(temp_path, "rb") as audio_file:
+            translation = await client.audio.transcriptions.create(
+                file=(os.path.basename(temp_path), audio_file.read()),
+                model="whisper-large-v3",
+                response_format="text",
+                language="en",
+            )
+            return translation.strip()
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 # ── TTS Engine ────────────────────────────────────────────────────────────────

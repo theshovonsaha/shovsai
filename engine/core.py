@@ -90,6 +90,7 @@ class AgentCore:
         search_backend: Optional[str] = None,
         images:         Optional[list[str]] = None,
         force_memory:   bool = False,
+        forced_tools:   Optional[list[str]] = None,
     ) -> AsyncIterator[dict]:
 
         model         = model or self.def_model
@@ -157,6 +158,7 @@ class AgentCore:
                 message_count=session.message_count,
                 historical_anchors=historical_anchors,
                 force_memory=force_memory,
+                forced_tools=forced_tools,
             )
 
             prompt_tokens_est = sum(len(m["content"]) for m in messages) // 4
@@ -460,8 +462,18 @@ class AgentCore:
         message_count:      int = 0,
         historical_anchors: Optional[list[dict]] = None,
         force_memory:       bool = False,
+        forced_tools:       Optional[list[str]] = None,
     ) -> list[dict]:
         parts = [system_prompt]
+
+        if forced_tools:
+            tools_str = ", ".join(forced_tools)
+            parts.append(
+                "--- TOOL OVERRIDE ---\n"
+                f"COMMAND: You MUST use the following tools immediately to answer this query: {tools_str}\n"
+                "Do not provide a final answer until you have processed the results from these tools.\n"
+                "--- END OVERRIDE ---"
+            )
 
         if force_memory:
             parts.append(

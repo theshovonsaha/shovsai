@@ -19,6 +19,10 @@ export const VoiceControl: React.FC<VoiceControlProps> = ({ sessionId, agentId, 
     const toggleRecording = async () => {
         if (isRecording) {
             stopRecording();
+        } else if (status === 'processing' || status === 'speaking') {
+            // Cancel current interaction
+            if (wsRef.current) wsRef.current.close();
+            setStatus('idle');
         } else {
             startRecording();
         }
@@ -80,6 +84,7 @@ export const VoiceControl: React.FC<VoiceControlProps> = ({ sessionId, agentId, 
                             break;
                         case 'tts_end':
                             setStatus('idle');
+                            if (wsRef.current) wsRef.current.close();
                             break;
                         case 'error':
                             setError(msg.message);
@@ -110,11 +115,9 @@ export const VoiceControl: React.FC<VoiceControlProps> = ({ sessionId, agentId, 
         if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop();
         }
-        if (wsRef.current) {
-            wsRef.current.close();
-        }
+        // Do NOT close wsRef here. The server needs to process the last audio
+        // and send back text + TTS.
         setIsRecording(false);
-        setStatus('idle');
     };
 
     const playAudioChunk = async (data: ArrayBuffer) => {

@@ -1428,9 +1428,275 @@ textarea::placeholder {
   box-shadow: 0 0 10px rgba(0, 232, 122, 0.1);
 }
 
-.input-group label {
+
+/* Tool Selector UI */
+
+/* Tool Selector UI */
+.tool-selector-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.btn-tool-trigger {
+  background: none;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-dim);
+  width: 32px;
+  height: 32px;
+  border-radius: 4px;
+  margin-right: 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.btn-tool-trigger:hover,
+.btn-tool-trigger.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(0, 255, 128, 0.05);
+}
+
+.tool-menu {
+  position: absolute;
+  bottom: 45px;
+  right: 0;
+  width: 280px;
+  background: rgba(12, 12, 12, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-hi);
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  padding: 8px 0;
+  animation: selectOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes selectOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.tool-menu-head {
+  padding: 8px 16px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  border-bottom: 1px solid var(--border-subtle);
+  margin-bottom: 4px;
+}
+
+.tool-menu-item {
+  padding: 8px 16px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  transition: all 0.2s;
+}
+
+.tool-menu-item:hover {
+  background: var(--surface3);
+  padding-left: 20px;
+}
+
+.tool-menu-item.selected {
+  background: rgba(0, 232, 122, 0.08);
+  border-left: 2px solid var(--accent);
+  color: var(--accent);
+}
+
+.tool-menu-item .t-name {
+  color: var(--text-main);
+  font-weight: 500;
+  font-size: 13px;
+}
+
+.tool-menu-item .t-desc {
+  color: var(--text-dim);
+  font-size: 11px;
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.attach-chip.tool {
+  background: rgba(0, 255, 128, 0.1);
+  border: 1px solid rgba(0, 255, 128, 0.2);
+  color: var(--accent);
+}
+
+/* Premium Select Component */
+.premium-select-container {
+  position: relative;
+  width: 100%;
+  font-family: var(--mono);
+}
+
+.premium-select-label {
   display: block;
   font-size: 10px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 6px;
+}
+
+.premium-select-trigger {
+  width: 100%;
+  padding: 10px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border-hi);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  font-size: 13px;
+  user-select: none;
+}
+
+.premium-select-trigger:hover {
+  border-color: var(--accent);
+  background: var(--surface3);
+}
+
+.premium-select-trigger.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(0, 232, 122, 0.15);
+}
+
+.premium-select-value {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.premium-select-value .placeholder {
+  color: var(--text-dim);
+}
+
+.premium-select-arrow {
+  font-size: 10px;
+  color: var(--text-dim);
+  transition: transform 0.2s;
+}
+
+.premium-select-trigger.active .premium-select-arrow {
+  transform: rotate(180deg);
+  color: var(--accent);
+}
+
+.premium-select-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 100%;
+  background: rgba(12, 12, 12, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-hi);
+  border-radius: 6px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  max-height: 250px;
+  overflow-y: auto;
+  padding: 6px;
+  animation: selectOpen 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-hi) transparent;
+}
+
+@keyframes selectOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.premium-select-option {
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: all 0.15s;
+  color: var(--text-mid);
+  font-size: 12px;
+}
+
+.premium-select-option:hover {
+  background: var(--surface3);
+  color: var(--text);
+  padding-left: 16px;
+}
+
+.premium-select-option.selected {
+  background: rgba(0, 232, 122, 0.08);
+  color: var(--accent);
+}
+
+.premium-select-option .opt-check {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+/* Custom Scrollbar for Dropdowns */
+.premium-select-dropdown::-webkit-scrollbar {
+  width: 4px;
+}
+
+.premium-select-dropdown::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.premium-select-dropdown::-webkit-scrollbar-thumb {
+  background: var(--border-hi);
+  border-radius: 10px;
+}
+
+/* Specific adjustment for Topbar Select */
+.topbar .premium-select-container {
+  width: 180px;
+}
+
+.topbar .premium-select-trigger {
+  padding: 6px 10px;
+  font-size: 11px;
+  background: var(--bg);
+  height: 30px;
+}
+
+.topbar .premium-select-dropdown {
+  width: 200px;
+  right: 0;
+  left: auto;
+}
+
+.ctx-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   text-transform: uppercase;
   letter-spacing: 0.15em;
   color: var(--text-mid);

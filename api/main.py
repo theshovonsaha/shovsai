@@ -62,9 +62,9 @@ class ChatRequest(BaseModel):
     message:       str  = Field(..., min_length=1, max_length=32_000)
     session_id:    Optional[str] = None
     agent_id:      Optional[str] = "default"
-    model:         Optional[str] = None
     system_prompt: Optional[str] = None
     force_memory:  Optional[bool] = False
+    forced_tools:  Optional[List[str]] = Field(default_factory=list)
 
 @app.get("/")
 async def root():
@@ -136,8 +136,15 @@ async def chat_stream(
     system_prompt: Optional[str]    = Form(None),
     search_backend: Optional[str]   = Form(None),
     force_memory:   Optional[bool]  = Form(False),
+    forced_tools_json: Optional[str] = Form(None),
     files:         List[UploadFile] = File(default=[]),
 ):
+    forced_tools = []
+    if forced_tools_json:
+        try:
+            forced_tools = json.loads(forced_tools_json)
+        except:
+            pass
     async def generate():
         try:
             processed_files, image_b64s = [], []
@@ -165,6 +172,7 @@ async def chat_stream(
                 system_prompt=system_prompt,
                 search_backend=search_backend,
                 force_memory=force_memory,
+                forced_tools=forced_tools,
                 images=image_b64s or None,
             ):
                 yield f"data: {json.dumps(event)}\n\n"

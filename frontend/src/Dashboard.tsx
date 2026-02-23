@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { PremiumSelect } from './components/PremiumSelect';
 
 interface AgentProfile {
     id: string;
@@ -174,23 +175,21 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
                 </div>
 
                 <div className="input-group">
-                    <label>Chat Model</label>
-                    <select
+                    <PremiumSelect
+                        label="Chat Model"
                         value={model}
-                        onChange={e => setModel(e.target.value)}
-                    >
-                        {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                        options={availableModels}
+                        onChange={setModel}
+                    />
                 </div>
 
                 <div className="input-group">
-                    <label>Embedding Model</label>
-                    <select
+                    <PremiumSelect
+                        label="Embedding Model"
                         value={embedModel}
-                        onChange={e => setEmbedModel(e.target.value)}
-                    >
-                        {availableEmbedModels.map(m => <option key={m} value={m}>{m}</option>)}
-                    </select>
+                        options={availableEmbedModels}
+                        onChange={setEmbedModel}
+                    />
                 </div>
 
                 <div className="input-group">
