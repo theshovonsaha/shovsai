@@ -3,6 +3,7 @@ import { useAgent } from './useAgent';
 import { RichContentViewer } from './components/RichContentViewer';
 import { Dashboard } from './Dashboard';
 import { LogPanel } from './LogPanel';
+import { VoiceControl } from './components/VoiceControl';
 
 function App() {
   const agent = useAgent();
@@ -210,6 +211,11 @@ function App() {
             ))}
           </div>
           <div className="input-row">
+            <VoiceControl
+              sessionId={agent.currentSessionId}
+              agentId={agent.activeAgentId!}
+              model={agent.currentModel}
+            />
             <div className="input-wrap">
               <span className="input-prefix">›</span>
               <textarea ref={textareaRef} placeholder="message…" rows={1}
@@ -220,7 +226,16 @@ function App() {
           </div>
           <div className="input-footer">
             <span className="input-hint">Enter · Shift+Enter for newline</span>
-            <span className={`ctx-inline ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>● context {agent.contextLines > 0 ? 'warm' : 'cold'}</span>
+            <div className="input-controls">
+              <button
+                className={`force-mem-btn ${agent.forceMemory ? 'active' : ''}`}
+                onClick={() => agent.setForceMemory(!agent.forceMemory)}
+                title="Force agent to query long-term memory"
+              >
+                ◈ memory {agent.forceMemory ? 'forced' : 'auto'}
+              </button>
+              <span className={`ctx-inline ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>● context {agent.contextLines > 0 ? 'warm' : 'cold'}</span>
+            </div>
           </div>
         </div>
       </main>

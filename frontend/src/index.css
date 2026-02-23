@@ -570,6 +570,64 @@ select:focus {
   margin-right: 4px;
 }
 
+.voice-control {
+  margin-right: 12px;
+}
+
+.delete-agent-btn {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  opacity: 0;
+  z-index: 10;
+}
+
+.agent-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+}
+
+.danger-btn {
+  background: rgba(255, 68, 68, 0.1);
+  border: 1px solid rgba(255, 68, 68, 0.2);
+  color: var(--error);
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: all .15s;
+  height: 32px;
+}
+
+.danger-btn:hover {
+  background: var(--error);
+  color: #fff;
+  border-color: var(--error);
+}
+
+.modal-content.danger {
+  border-color: var(--error);
+  box-shadow: 0 0 30px rgba(255, 68, 68, 0.1);
+}
+
+.agent-card:hover .delete-agent-btn {
+  opacity: 1;
+}
+
+.delete-agent-btn:hover {
+  color: #ff4d4d;
+}
+
 .tool-args {
   color: var(--text-dim);
   font-size: 10px;
@@ -1350,8 +1408,33 @@ textarea::placeholder {
   border-color: var(--accent);
 }
 
-.log-search::placeholder {
-  color: var(--text-dim);
+.input-group select,
+.input-group input {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border-hi);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  border-radius: 2px;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.input-group select:focus,
+.input-group input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px rgba(0, 232, 122, 0.1);
+}
+
+.input-group label {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--text-mid);
+  margin-bottom: 8px;
 }
 
 .log-count {
@@ -1544,4 +1627,157 @@ textarea::placeholder {
   border-radius: 50%;
   background: var(--accent);
   animation: pulse 1.5s ease infinite;
+}
+
+/* ── Voice Control ───────────────────────────────────────────────────────── */
+.voice-control {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.voice-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.voice-btn:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.voice-btn.recording {
+  background: rgba(255, 68, 68, 0.1);
+  color: #ff4444;
+}
+
+.voice-btn.processing {
+  background: rgba(0, 184, 255, 0.1);
+  color: #00b8ff;
+}
+
+.voice-btn.speaking {
+  background: rgba(0, 232, 122, 0.1);
+  color: #00e87a;
+  box-shadow: 0 0 15px rgba(0, 232, 122, 0.2);
+}
+
+.voice-error {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  background: #ff4444;
+  color: white;
+  font-size: 10px;
+  padding: 4px 8px;
+  border-radius: 2px;
+  white-space: nowrap;
+  margin-bottom: 8px;
+  pointer-events: none;
+  animation: fadeInVoice 0.2s ease;
+}
+
+@keyframes fadeInVoice {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.pulse {
+  animation: pulseVoice 1.5s infinite;
+}
+
+@keyframes pulseVoice {
+  0% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.3;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+.spin {
+  animation: spinVoice 2s linear infinite;
+  display: inline-block;
+}
+
+@keyframes spinVoice {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.wave {
+  animation: bounceVoice 0.5s infinite alternate;
+  display: inline-block;
+}
+
+@keyframes bounceVoice {
+  from {
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.2);
+  }
+}
+
+/* ── New Controls ── */
+.tool-args {
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.input-controls {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.force-mem-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--mono);
+}
+
+.force-mem-btn.active {
+  background: rgba(0, 255, 136, 0.1);
+  border-color: #00ff88;
+  color: #00ff88;
+}
+
+.force-mem-btn:hover {
+  border-color: var(--text-dim);
 }

@@ -15,6 +15,7 @@ interface DashboardProps {
 export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
     const [agents, setAgents] = useState<AgentProfile[]>([]);
     const [showCreateModal, setShowCreateModal] = useState(false);
+    const [agentToDelete, setAgentToDelete] = useState<AgentProfile | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => { fetchAgents(); }, []);
@@ -25,6 +26,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
             setAgents(data.agents || []);
         } catch (e) { console.error('Failed to fetch agents:', e); }
         finally { setLoading(false); }
+    };
+
+    const confirmDelete = async () => {
+        if (!agentToDelete) return;
+        try {
+            const res = await fetch(`/api/agents/${agentToDelete.id}`, { method: 'DELETE' });
+            if (res.ok) fetchAgents();
+            else {
+                const data = await res.json();
+                alert(data.detail || 'Failed to delete agent');
+            }
+        } catch (e) { console.error('Delete failed:', e); }
+        finally { setAgentToDelete(null); }
     };
 
     if (loading) {
@@ -62,9 +76,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
                                 <span>{agent.model}</span>
                                 <span>{agent.tools.length} tools</span>
                             </div>
-                            <button className="launch-btn" onClick={() => onSelectAgent(agent.id)}>
-                                launch →
-                            </button>
+                            <div className="agent-actions">
+                                <button className="launch-btn" onClick={() => onSelectAgent(agent.id)}>
+                                    launch →
+                                </button>
+                                {agent.id !== 'default' && (
+                                    <button className="danger-btn" onClick={(e) => { e.stopPropagation(); setAgentToDelete(agent); }}>
+                                        delete
+                                    </button>
+                                )}
+                            </div>
                         </div>
                     ))
                 )}
@@ -76,6 +97,13 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
                     onCreated={() => { setShowCreateModal(false); fetchAgents(); }}
                 />
             )}
+            {agentToDelete && (
+                <DeleteConfirmationModal
+                    agentName={agentToDelete.name}
+                    onClose={() => setAgentToDelete(null)}
+                    onConfirm={confirmDelete}
+                />
+            )}
         </div>
     );
 };
@@ -85,9 +113,11 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [model, setModel] = useState('llama3.2');
+    const [embedModel, setEmbedModel] = useState('nomic-embed-text');
     const [selectedTools, setSelectedTools] = useState<string[]>([]);
     const [availableTools, setAvailableTools] = useState<any[]>([]);
     const [availableModels, setAvailableModels] = useState<string[]>(['llama3.2']);
+    const [availableEmbedModels] = useState<string[]>(['nomic-embed-text', 'text-embedding-3-small']);
     const [creating, setCreating] = useState(false);
 
     useEffect(() => {
@@ -106,7 +136,13 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
             await fetch('/api/agents', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: name.trim(), description, model, tools: selectedTools }),
+                body: JSON.stringify({
+                    name: name.trim(),
+                    description,
+                    model,
+                    embed_model: embedModel,
+                    tools: selectedTools
+                }),
             });
             onCreated();
         } catch (e) { console.error('Create failed:', e); }
@@ -138,13 +174,22 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
                 </div>
 
                 <div className="input-group">
-                    <label>Model</label>
+                    <label>Chat Model</label>
                     <select
                         value={model}
                         onChange={e => setModel(e.target.value)}
-                        style={{ width: '100%', padding: '10px 12px', borderRadius: '2px' }}
                     >
                         {availableModels.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                </div>
+
+                <div className="input-group">
+                    <label>Embedding Model</label>
+                    <select
+                        value={embedModel}
+                        onChange={e => setEmbedModel(e.target.value)}
+                    >
+                        {availableEmbedModels.map(m => <option key={m} value={m}>{m}</option>)}
                     </select>
                 </div>
 
@@ -173,6 +218,24 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
                     >
                         {creating ? 'initializing...' : 'initialize'}
                     </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+const DeleteConfirmationModal: React.FC<{ agentName: string; onClose: () => void; onConfirm: () => void }> = ({ agentName, onClose, onConfirm }) => {
+    return (
+        <div className="modal-overlay" onClick={onClose}>
+            <div className="modal-content danger" onClick={e => e.stopPropagation()}>
+                <h2 style={{ color: 'var(--error)' }}>Confirm Deletion</h2>
+                <p style={{ margin: '15px 0', color: 'var(--text-mid)', fontSize: '12px' }}>
+                    Are you sure you want to delete <strong style={{ color: 'var(--text)' }}>{agentName}</strong>?
+                    This action cannot be undone and will remove all associated configurations.
+                </p>
+                <div className="modal-actions">
+                    <button onClick={onClose}>cancel</button>
+                    <button className="danger-btn" onClick={onConfirm}>delete agent</button>
                 </div>
             </div>
         </div>

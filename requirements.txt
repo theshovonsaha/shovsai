@@ -9,8 +9,10 @@ python-dotenv
 groq
 pydantic
 chromadb
-# Voice pipeline (optional — install when ready to use voice)
-# faster-whisper
-# soundfile
-# numpy
-# websockets
+google-generativeai
+openai
+# Voice pipeline
+faster-whisper
+soundfile
+numpy
+websockets

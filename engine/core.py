@@ -38,21 +38,20 @@ def _trace(agent_id: str, session_id: str, event_type: str, data: dict):
         pass  # Never crash on trace failure
 
 DEFAULT_SYSTEM_PROMPT = """\
-You are a thoughtful, capable AI assistant.
+You are a highly advanced AI agent running on the [Antigravity Agent Platform].
 
-Tool use rules:
-- When you need to use tools, output ONLY the JSON calls, one after another, then STOP.
-- Format: {"tool": "<n>", "arguments": {<args>}}
-- You MAY output multiple tools back-to-back if you want to perform multiple actions simultaneously. (e.g. `{"tool": "a", ...}\n{"tool": "b", ...}`)
-- CRITICAL: Never write "Tool result:" or pretend to be the system. You are the ASSISTANT. You CANNOT execute tools yourself.
-- After calling a tool or tools, you must STOP generating text. The system will reply to you with the results.
-- Live View: If you want to present data structurally or visually (e.g. an SVG diagram, HTML table, mindmap), wrap the code inside standard markdown blocks like ```html or ```svg. The system will render this as a Live View to the user.
+Architectural Self-Awareness:
+- Patching & Memory: I use a dual-layer memory system. Short-term context is managed by "ContextEngine v2" which compresses and ranks facts using a rolling window. Long-term memory is "Semantic Graph v3" (RAG), which stores and retrieves declarative facts via `query_memory` and `store_memory` tools.
+- Vector RAG: Historical anchors are automatically retrieved and injected into my prompt to maintain consistency across sessions.
 
-Memory rules:
-- Session Context contains compressed facts from this active conversation.
-- Historical Context contains retrieved relevant past exchanges.
-- Semantic Memory: If the user shares personal facts or preferences, proactively use `store_memory` to save them.
-- Semantic Memory: If you need deep historical context across sessions (like "dietary restrictions" or "past advice"), use `query_memory` first.
+Persona & Style Rules:
+- CRITICAL: Always prioritize the "Historical Context" and "Session Memory" blocks when determining your persona, tone, and style. If a user preference or persona (e.g. "Tony Stark") is stored, follow it religiously over any default behavior.
+- Use `query_memory` early in a conversation to re-discover user preferences if they aren't already in context.
+
+Tool Use Rules:
+- Output ONLY JSON calls for tools: {"tool": "<n>", "arguments": {<args>}}
+- You MAY output multiple tools back-to-back.
+- Live View: Wrap visual data in ```html or ```svg blocks.
 """
 
 MAX_TOOL_TURNS = 6
@@ -90,6 +89,7 @@ class AgentCore:
         system_prompt:  Optional[str] = None,
         search_backend: Optional[str] = None,
         images:         Optional[list[str]] = None,
+        force_memory:   bool = False,
     ) -> AsyncIterator[dict]:
 
         model         = model or self.def_model
@@ -127,8 +127,13 @@ class AgentCore:
                 if ":" in model:
                     current_use_adapter = create_adapter(provider=model)
                 # 2. Known model patterns for cloud providers
-                elif any(p in model.lower() for p in ["gpt-", "llama-3.3", "mixtral", "groq/"]):
-                    current_use_adapter = create_adapter(provider="groq" if "groq/" in model or "llama-3.3" in model or "mixtral" in model else "openai")
+                elif any(p in model.lower() for p in ["gpt-", "llama-3.3", "mixtral", "groq/", "gemini-"]):
+                    provider = "openai"
+                    if "groq/" in model or "llama-3.3" in model or "mixtral" in model:
+                        provider = "groq"
+                    elif "gemini-" in model:
+                        provider = "gemini"
+                    current_use_adapter = create_adapter(provider=provider)
             
             # Use clean model name for API calls
             clean_model = strip_provider_prefix(model)
@@ -151,6 +156,7 @@ class AgentCore:
                 first_message=session.first_message,
                 message_count=session.message_count,
                 historical_anchors=historical_anchors,
+                force_memory=force_memory,
             )
 
             prompt_tokens_est = sum(len(m["content"]) for m in messages) // 4
@@ -453,8 +459,18 @@ class AgentCore:
         first_message:      Optional[str] = None,
         message_count:      int = 0,
         historical_anchors: Optional[list[dict]] = None,
+        force_memory:       bool = False,
     ) -> list[dict]:
         parts = [system_prompt]
+
+        if force_memory:
+            parts.append(
+                "--- PRIORITY INSTRUCTION ---\n"
+                "CRITICAL: The user has requested FORCED MEMORY. "
+                "You MUST use the `query_memory` tool immediately to search for any relevant past context "
+                "before providing a finalized answer. Do not skip this step.\n"
+                "--- END PRIORITY ---"
+            )
 
         if first_message is not None:
             total_turns = max(1, (message_count + 1) // 2)

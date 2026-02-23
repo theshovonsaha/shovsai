@@ -13,11 +13,28 @@ interface RichContentViewerProps {
 }
 
 export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content }) => {
+    // Sanitize content to handle common LLM output issues that break KaTeX
+    const sanitizedContent = content
+        // Replace non-breaking hyphens with standard hyphens
+        .replace(/\u2011/g, '-')
+        // Replace smart/curly quotes with standard single/double quotes
+        .replace(/[\u2018\u2019]/g, "'")
+        .replace(/[\u201C\u201D]/g, '"')
+        // Fix trailing % in math blocks that confuses KaTeX parser
+        .replace(/%(\s*\$)/g, '$1');
+
     return (
         <div className="rich-content-viewer">
             <ReactMarkdown
                 remarkPlugins={[remarkGfm, remarkMath]}
-                rehypePlugins={[rehypeRaw, rehypeKatex]}
+                rehypePlugins={[
+                    rehypeRaw,
+                    [rehypeKatex, {
+                        strict: 'ignore',
+                        throwOnError: false,
+                        trust: true
+                    }]
+                ]}
                 components={{
                     code({ inline, className, children, ...props }: any) {
                         const match = /language-(\w+)/.exec(className || '');
@@ -43,7 +60,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                     }
                 }}
             >
-                {content}
+                {sanitizedContent}
             </ReactMarkdown>
         </div>
     );

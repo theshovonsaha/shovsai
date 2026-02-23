@@ -7,8 +7,9 @@ Priority order (first configured wins):
   1. OLLAMA_BASE_URL set or Ollama reachable → OllamaAdapter (default)
   2. OPENAI_API_KEY set → OpenAIAdapter
   3. GROQ_API_KEY set → GroqLLMAdapter
+  4. GEMINI_API_KEY set → GeminiAdapter
 
-Override with: LLM_PROVIDER=ollama|openai|groq
+Override with: LLM_PROVIDER=ollama|openai|groq|gemini
 """
 
 import os
@@ -21,7 +22,7 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     """
     if provider and ":" in provider:
         p_part = provider.split(":")[0].lower()
-        if p_part in ["ollama", "openai", "groq"]:
+        if p_part in ["ollama", "openai", "groq", "gemini"]:
             provider = p_part
 
     # Ensure provider is a string and not None for further comparisons
@@ -34,6 +35,10 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     if provider_str == "groq" or (provider_str == "auto" and os.getenv("GROQ_API_KEY")):
         from llm.groq_adapter import GroqLLMAdapter
         return GroqLLMAdapter()
+
+    if provider_str == "gemini" or (provider_str == "auto" and os.getenv("GEMINI_API_KEY")):
+        from llm.gemini_adapter import GeminiAdapter
+        return GeminiAdapter()
 
     # Default: Ollama (local, no key required)
     from llm.llm_adapter import OllamaAdapter
@@ -49,7 +54,7 @@ def strip_provider_prefix(model_name: str) -> str:
         return model_name
     
     parts = model_name.split(":", 1)
-    if parts[0].lower() in ["ollama", "openai", "groq"]:
+    if parts[0].lower() in ["ollama", "openai", "groq", "gemini"]:
         return parts[1]
     return model_name
 
@@ -66,4 +71,9 @@ def get_default_model(adapter: BaseLLMAdapter) -> str:
         return os.getenv("DEFAULT_MODEL", "gpt-4o-mini")
     if isinstance(adapter, GroqLLMAdapter):
         return os.getenv("DEFAULT_MODEL", "llama-3.3-70b-versatile")
+    
+    from llm.gemini_adapter import GeminiAdapter
+    if isinstance(adapter, GeminiAdapter):
+        return os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+
     return "llama3.2"

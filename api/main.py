@@ -19,6 +19,7 @@ from engine.core import AgentCore
 from llm.llm_adapter import OllamaAdapter
 from engine.context_engine import ContextEngine
 from orchestration.session_manager import SessionManager
+from llm.adapter_factory import create_adapter
 from plugins.tool_registry import ToolRegistry
 from plugins.tools import register_all_tools, register_tools
 from plugins.tools_web import register_web_tools
@@ -63,6 +64,7 @@ class ChatRequest(BaseModel):
     agent_id:      Optional[str] = "default"
     model:         Optional[str] = None
     system_prompt: Optional[str] = None
+    force_memory:  Optional[bool] = False
 
 @app.get("/")
 async def root():
@@ -70,27 +72,33 @@ async def root():
 
 @app.get("/health")
 async def health():
-    from llm.adapter_factory import create_adapter
     ollama = create_adapter("ollama")
     groq = create_adapter("groq")
+    openai = create_adapter("openai")
+    gemini = create_adapter("gemini")
     
     ollama_ok = await ollama.health()
     groq_ok = await groq.health()
+    openai_ok = await openai.health()
+    gemini_ok = await gemini.health()
     
     return {
-        "status": "ok" if (ollama_ok or groq_ok) else "degraded",
+        "status": "ok" if (ollama_ok or groq_ok or openai_ok or gemini_ok) else "degraded",
         "providers": {
             "ollama": ollama_ok,
-            "groq": groq_ok
+            "groq": groq_ok,
+            "openai": openai_ok,
+            "gemini": gemini_ok
         },
         "tools": tool_registry.list_tools(),
     }
 
 @app.get("/models")
 async def list_models():
-    from llm.adapter_factory import create_adapter
     ollama = create_adapter("ollama")
     groq = create_adapter("groq")
+    openai = create_adapter("openai")
+    gemini = create_adapter("gemini")
     
     models = []
     try:
@@ -101,6 +109,16 @@ async def list_models():
     try:
         m_cloud = await groq.list_models()
         models.extend([f"groq:{m}" for m in m_cloud] if m_cloud else [])
+    except: pass
+
+    try:
+        m_openai = await openai.list_models()
+        models.extend([f"openai:{m}" for m in m_openai] if m_openai else [])
+    except: pass
+
+    try:
+        m_gemini = await gemini.list_models()
+        models.extend([f"gemini:{m}" for m in m_gemini] if m_gemini else [])
     except: pass
     
     return {"models": models}
@@ -117,6 +135,7 @@ async def chat_stream(
     model:         Optional[str]    = Form(None),
     system_prompt: Optional[str]    = Form(None),
     search_backend: Optional[str]   = Form(None),
+    force_memory:   Optional[bool]  = Form(False),
     files:         List[UploadFile] = File(default=[]),
 ):
     async def generate():
@@ -145,6 +164,7 @@ async def chat_stream(
                 model=model, 
                 system_prompt=system_prompt,
                 search_backend=search_backend,
+                force_memory=force_memory,
                 images=image_b64s or None,
             ):
                 yield f"data: {json.dumps(event)}\n\n"
