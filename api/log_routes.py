@@ -2,10 +2,10 @@
 Add these routes to main.py to expose the internal log stream.
 
 1. Add to imports at top of main.py:
-   from logger import get_logger, log
+   from config.logger import get_logger, log
 
 2. Add after app = FastAPI(...):
-   from log_routes import setup_log_routes
+   from api.log_routes import setup_log_routes
    setup_log_routes(app)
 
 3. In chat_stream(), after agent_instance is created, add:
@@ -19,7 +19,7 @@ import json
 
 
 def setup_log_routes(app: FastAPI):
-    from logger import get_logger
+    from config.logger import get_logger
 
     @app.get("/logs/stream")
     async def log_stream(session_id: Optional[str] = None, category: Optional[str] = None):

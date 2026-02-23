@@ -12,7 +12,7 @@ Override with: LLM_PROVIDER=ollama|openai|groq
 """
 
 import os
-from base_adapter import BaseLLMAdapter
+from llm.base_adapter import BaseLLMAdapter
 
 
 def create_adapter(provider: str = None) -> BaseLLMAdapter:
@@ -26,26 +26,26 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     provider = provider or os.getenv("LLM_PROVIDER", "auto")
 
     if provider == "openai" or (provider == "auto" and os.getenv("OPENAI_API_KEY")):
-        from openai_adapter import OpenAIAdapter
+        from llm.openai_adapter import OpenAIAdapter
         print("[AdapterFactory] Using OpenAI adapter")
         return OpenAIAdapter()
 
     if provider == "groq" or (provider == "auto" and os.getenv("GROQ_API_KEY") and not os.getenv("OPENAI_API_KEY")):
-        from groq_adapter import GroqLLMAdapter
+        from llm.groq_adapter import GroqLLMAdapter
         print("[AdapterFactory] Using Groq adapter")
         return GroqLLMAdapter()
 
     # Default: Ollama (local, no key required)
-    from llm_adapter import OllamaAdapter
+    from llm.llm_adapter import OllamaAdapter
     print("[AdapterFactory] Using Ollama adapter (local)")
     return OllamaAdapter()
 
 
 def get_default_model(adapter: BaseLLMAdapter) -> str:
     """Return sensible default model for each provider type."""
-    from llm_adapter import OllamaAdapter
-    from openai_adapter import OpenAIAdapter
-    from groq_adapter import GroqLLMAdapter
+    from llm.llm_adapter import OllamaAdapter
+    from llm.openai_adapter import OpenAIAdapter
+    from llm.groq_adapter import GroqLLMAdapter
 
     if isinstance(adapter, OllamaAdapter):
         return os.getenv("DEFAULT_MODEL", "llama3.2")

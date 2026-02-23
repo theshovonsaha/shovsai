@@ -3,7 +3,7 @@ import asyncio
 from typing import List
 
 # We will implement this class in vector_engine.py
-# from vector_engine import VectorEngine 
+# from memory.vector_engine import VectorEngine 
 
 @pytest.mark.asyncio
 async def test_vector_engine_anchored_retrieval():
@@ -11,7 +11,7 @@ async def test_vector_engine_anchored_retrieval():
     RED TEST: Should retrieve the raw 3-turn anchor when a semantic key is matched.
     """
     # This will fail because VectorEngine is not yet defined
-    from vector_engine import VectorEngine
+    from memory.vector_engine import VectorEngine
     
     ve = VectorEngine(session_id="test_session")
     
@@ -33,7 +33,7 @@ async def test_vector_engine_uniqueness():
     """
     RED TEST: Should prevent duplicate indexing of identical anchors.
     """
-    from vector_engine import VectorEngine
+    from memory.vector_engine import VectorEngine
     ve = VectorEngine(session_id="test_session_unique")
     
     anchor = "Static conversation turn"

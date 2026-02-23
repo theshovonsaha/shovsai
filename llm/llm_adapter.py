@@ -13,7 +13,7 @@ import json
 import asyncio
 from typing import AsyncIterator, Optional
 
-from base_adapter import BaseLLMAdapter, LLMError  # re-export LLMError for back-compat
+from llm.base_adapter import BaseLLMAdapter, LLMError  # re-export LLMError for back-compat
 
 
 OLLAMA_BASE    = "http://localhost:11434"

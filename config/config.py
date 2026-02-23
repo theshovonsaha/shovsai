@@ -5,7 +5,7 @@ Single source of truth for all platform settings.
 Reads from environment variables with sensible defaults.
 
 Usage:
-    from config import cfg
+    from config.config import cfg
     print(cfg.DEFAULT_MODEL)
 """
 

@@ -1,6 +1,6 @@
 import pytest
 import asyncio
-from core import AgentCore, _ev
+from engine.core import AgentCore, _ev
 from unittest.mock import AsyncMock, MagicMock
 
 class AsyncIter:

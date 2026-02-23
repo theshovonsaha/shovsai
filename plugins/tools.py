@@ -38,7 +38,7 @@ from typing import Optional
 
 import httpx
 
-from tool_registry import Tool, ToolRegistry
+from plugins.tool_registry import Tool, ToolRegistry
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────
@@ -889,6 +889,74 @@ PLACES_MAP_TOOL = Tool(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  DEEP MEMORY (Semantic Graph)
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _store_memory(subject: str, predicate: str, object_: str) -> str:
+    """Explicitly store a factual triplet into the semantic graph memory."""
+    from memory.semantic_graph import SemanticGraph
+    try:
+        graph = SemanticGraph()
+        await graph.add_triplet(subject, predicate, object_)
+        return f"Successfully stored memory: [{subject}] --[{predicate}]--> [{object_}]"
+    except Exception as e:
+        return f"Failed to store memory: {e}"
+
+STORE_MEMORY_TOOL = Tool(
+    name="store_memory",
+    description=(
+        "Store a single declarative fact or preference about the user or the world into long-term semantic memory. "
+        "Use this PROACTIVELY when the user tells you something important to remember for future conversations. "
+        "Break the fact into a subject, a predicate (the verb/relationship), and an object."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "subject": {"type": "string", "description": "The entity the fact is about (e.g., 'User', 'System', 'John')"},
+            "predicate": {"type": "string", "description": "The relationship (e.g., 'likes', 'is allergic to', 'works at')"},
+            "object_": {"type": "string", "description": "The target of the relationship (e.g., 'spicy food', 'peanuts', 'Google')"}
+        },
+        "required": ["subject", "predicate", "object_"]
+    },
+    handler=_store_memory,
+    tags=["memory", "core"]
+)
+
+async def _query_memory(topic: str) -> str:
+    """Traverse the semantic graph memory for facts related to a topic."""
+    from memory.semantic_graph import SemanticGraph
+    try:
+        graph = SemanticGraph()
+        results = await graph.traverse(topic, top_k=5)
+        if not results:
+            return f"No memories found related to '{topic}'."
+        
+        lines = [f"Found {len(results)} relevant memories:"]
+        for r in results:
+            lines.append(f"  - [{r['subject']}] --[{r['predicate']}]--> [{r['object']}]  (confidence: {r['similarity']})")
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Failed to query memory: {e}"
+
+QUERY_MEMORY_TOOL = Tool(
+    name="query_memory",
+    description=(
+        "Search the long-term semantic memory graph for stored facts and preferences. "
+        "Use this when you need historical context about a specific topic, like 'dietary restrictions' or 'favorite movies'. "
+        "It will return a list of interconnected facts."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "topic": {"type": "string", "description": "The broad topic or specific entity to search for (e.g., 'food preferences', 'John')"}
+        },
+        "required": ["topic"]
+    },
+    handler=_query_memory,
+    tags=["memory", "core"]
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Registration helper
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -903,8 +971,9 @@ ALL_TOOLS = [
     WEATHER_TOOL,
     PLACES_SEARCH_TOOL,
     PLACES_MAP_TOOL,
+    STORE_MEMORY_TOOL,
+    QUERY_MEMORY_TOOL,
 ]
-
 
 def register_all_tools(registry: ToolRegistry) -> None:
     """Register every built-in tool. Call this in main.py after creating tool_registry."""

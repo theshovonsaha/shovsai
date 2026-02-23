@@ -5,7 +5,7 @@ Replaces scattered print() calls with a structured log system.
 Broadcasts log entries to any connected SSE subscribers (the dev panel).
 
 Usage anywhere in the codebase:
-    from logger import log
+    from config.logger import log
     log("agent", "session_id", "Tool call detected: web_search")
     log("tool",  "session_id", "web_search returned 8 results", level="ok")
     log("rag",   "session_id", "3 anchors retrieved from vector store")

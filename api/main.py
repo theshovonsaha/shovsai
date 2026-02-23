@@ -15,19 +15,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
-from core import AgentCore
-from llm_adapter import OllamaAdapter
-from context_engine import ContextEngine
-from session_manager import SessionManager
-from tool_registry import ToolRegistry
-from tools import register_all_tools, register_tools
-from tools_web import register_web_tools
-from file_processor import FileProcessor
-from agent_profiles import ProfileManager, AgentProfile
-from agent_manager import AgentManager
-from logger import get_logger, log
-from log_routes import setup_log_routes
-from voice_endpoint import setup_voice_routes
+from engine.core import AgentCore
+from llm.llm_adapter import OllamaAdapter
+from engine.context_engine import ContextEngine
+from orchestration.session_manager import SessionManager
+from plugins.tool_registry import ToolRegistry
+from plugins.tools import register_all_tools, register_tools
+from plugins.tools_web import register_web_tools
+from engine.file_processor import FileProcessor
+from orchestration.agent_profiles import ProfileManager, AgentProfile
+from orchestration.agent_manager import AgentManager
+from config.logger import get_logger, log
+from api.log_routes import setup_log_routes
+from api.voice_endpoint import setup_voice_routes
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DEFAULT_CHAT_MODEL = "llama3.2"

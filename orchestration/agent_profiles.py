@@ -54,7 +54,7 @@ class ProfileManager:
                 id="default",
                 name="Global Assistant",
                 description="The standard all-purpose agent.",
-                tools=["web_search", "web_fetch", "image_search", "bash", "file_create", "file_view", "file_str_replace", "weather_fetch", "places_search", "places_map"]
+                tools=["web_search", "web_fetch", "image_search", "bash", "file_create", "file_view", "file_str_replace", "weather_fetch", "places_search", "places_map", "store_memory", "query_memory"]
             ))
 
     def create(self, p: AgentProfile) -> AgentProfile:

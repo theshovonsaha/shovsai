@@ -44,7 +44,7 @@ from typing import Optional
 import httpx
 from groq import AsyncGroq
 
-from tool_registry import Tool, ToolRegistry
+from plugins.tool_registry import Tool, ToolRegistry
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────

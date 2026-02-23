@@ -12,7 +12,7 @@ import asyncio
 import os
 from typing import AsyncIterator, Optional
 
-from base_adapter import BaseLLMAdapter, LLMError
+from llm.base_adapter import BaseLLMAdapter, LLMError
 
 RETRY_DELAYS = [0.5, 1.5, 3.0]
 

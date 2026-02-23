@@ -8,7 +8,7 @@ These test the critical bugs found via live log analysis.
 import pytest
 import asyncio
 import re
-from core import AgentCore, _ev
+from engine.core import AgentCore, _ev
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -100,7 +100,7 @@ async def test_model_override_updates_session():
     tools.build_tools_block.return_value = ""
     
     # Patch VectorEngine to avoid ChromaDB dependency
-    with patch("core.VectorEngine") as mock_ve:
+    with patch("engine.core.VectorEngine") as mock_ve:
         mock_ve_instance = MagicMock()
         mock_ve_instance.query = AsyncMock(return_value=[])
         mock_ve.return_value = mock_ve_instance
@@ -132,7 +132,7 @@ async def test_model_override_updates_session():
 
 def test_agent_manager_caches_instances():
     """AgentManager should return the same instance for the same agent_id."""
-    from agent_manager import AgentManager
+    from orchestration.agent_manager import AgentManager
     
     profiles = MagicMock()
     profile = MagicMock()
@@ -159,7 +159,7 @@ def test_agent_manager_caches_instances():
 
 def test_agent_manager_invalidate_cache():
     """Invalidating cache should force re-creation."""
-    from agent_manager import AgentManager
+    from orchestration.agent_manager import AgentManager
     
     profiles = MagicMock()
     profile = MagicMock()
@@ -240,7 +240,7 @@ def test_context_assembly_order():
 
 def test_session_update_model():
     """update_model should persist the model change to the session."""
-    from session_manager import SessionManager
+    from orchestration.session_manager import SessionManager
     import tempfile, os
     
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

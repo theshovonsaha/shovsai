@@ -1,8 +1,8 @@
 import pytest
 import asyncio
-from main import app
+from api.main import app
 from httpx import AsyncClient
-from vector_engine import VectorEngine
+from memory.vector_engine import VectorEngine
 
 @pytest.mark.asyncio
 async def test_full_rag_cycle():
@@ -43,7 +43,7 @@ async def test_web_tools_integration():
     """
     Tests the web_search and web_fetch tool chain.
     """
-    from tools_web import _web_search, _web_fetch
+    from plugins.tools_web import _web_search, _web_fetch
     
     print("\n[SYSTEM TEST] Testing Web Search...")
     search_res = await _web_search("Current CEO of Groq", num_results=1)

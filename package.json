@@ -5,7 +5,7 @@
     "main": "index.js",
     "scripts": {
         "setup:venv": "python3 -m venv venv && ./venv/bin/pip install -r requirements.txt",
-        "dev:backend": "./venv/bin/uvicorn main:app --reload --port 8001",
+        "dev:backend": "./venv/bin/uvicorn api.main:app --reload --port 8000",
         "dev:frontend": "cd frontend && npm run dev",
         "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
         "install:all": "npm install && npm run setup:venv && cd frontend && npm install",

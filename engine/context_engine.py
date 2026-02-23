@@ -14,7 +14,7 @@ Changes vs v1:
 """
 
 import re
-from llm_adapter import OllamaAdapter
+from llm.llm_adapter import OllamaAdapter
 
 
 COMPRESSION_PROMPT = """\

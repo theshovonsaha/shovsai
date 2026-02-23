@@ -5,12 +5,12 @@ Orchestrates the loading of AgentProfiles and instantiation of specialized Agent
 """
 
 from typing import Optional
-from agent_profiles import ProfileManager, AgentProfile
-from core import AgentCore
-from tool_registry import ToolRegistry, Tool
-from session_manager import SessionManager
-from context_engine import ContextEngine
-from llm_adapter import OllamaAdapter
+from orchestration.agent_profiles import ProfileManager, AgentProfile
+from engine.core import AgentCore
+from plugins.tool_registry import ToolRegistry, Tool
+from orchestration.session_manager import SessionManager
+from engine.context_engine import ContextEngine
+from llm.llm_adapter import OllamaAdapter
 
 class AgentManager:
     def __init__(

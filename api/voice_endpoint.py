@@ -31,7 +31,7 @@ import asyncio
 from typing import Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from logger import log
+from config.logger import log
 
 
 def setup_voice_routes(app: FastAPI, agent_manager) -> None:

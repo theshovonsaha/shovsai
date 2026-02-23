@@ -8,12 +8,12 @@ import os
 from datetime import datetime
 from typing import AsyncIterator, Optional
 
-from llm_adapter     import OllamaAdapter, LLMError
-from context_engine  import ContextEngine
-from session_manager import SessionManager
-from tool_registry   import ToolRegistry
-from vector_engine   import VectorEngine
-from logger          import log
+from llm.llm_adapter     import OllamaAdapter, LLMError
+from engine.context_engine  import ContextEngine
+from orchestration.session_manager import SessionManager
+from plugins.tool_registry   import ToolRegistry
+from memory.vector_engine   import VectorEngine
+from config.logger          import log
 
 # ── Trace Logger ─────────────────────────────────────────────────────────────
 _TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
@@ -45,9 +45,10 @@ Tool use rules:
 - After receiving [Tool result from <n>], answer using that result. Never repeat the tool call.
 
 Memory rules:
-- Session Context contains compressed facts from this conversation.
-- Historical Context contains retrieved relevant exchanges.
-- If something is not in either, say you don't have a record of it.\
+- Session Context contains compressed facts from this active conversation.
+- Historical Context contains retrieved relevant past exchanges.
+- Semantic Memory: If the user shares personal facts or preferences, proactively use `store_memory` to save them.
+- Semantic Memory: If you need deep historical context across sessions (like "dietary restrictions" or "past advice"), use `query_memory` first.
 """
 
 MAX_TOOL_TURNS = 6
