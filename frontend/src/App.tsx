@@ -1,0 +1,238 @@
+import React, { useState, useRef, useEffect } from 'react';
+import { useAgent } from './useAgent';
+import { processMarkdown } from './lib/markdown';
+import { Dashboard } from './Dashboard';
+import { LogPanel } from './LogPanel';
+
+function App() {
+  const agent = useAgent();
+  const [inputText, setInputText] = useState('');
+  const [logOpen, setLogOpen] = useState(false);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 200) + 'px';
+  }, [inputText]);
+
+  const handleSend = () => {
+    if (!inputText.trim() && agent.pendingFiles.length === 0) return;
+    agent.sendMessage(inputText);
+    setInputText('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); }
+  };
+
+  const StatusDot = () => {
+    const state = agent.health.status === 'ok' ? 'ok' : 'error';
+    return (
+      <div className="status-pill">
+        <div className={`dot ${agent.isStreaming ? 'busy' : state}`} />
+        <span>{agent.isStreaming ? 'answering...' : agent.health.status === 'ok' ? 'connected' : 'connecting...'}</span>
+      </div>
+    );
+  };
+
+  if (!agent.activeAgentId) {
+    return <Dashboard onSelectAgent={(id) => agent.setActiveAgentId(id)} />;
+  }
+
+  return (
+    <div className={`layout ${logOpen ? 'log-open' : ''}`}>
+
+      {/* Topbar */}
+      <header className="topbar">
+        <button className="home-btn" onClick={() => agent.setActiveAgentId(null)}>← agents</button>
+        <span className="logo-a">AGENT</span>
+        <span className="logo-sep">//</span>
+        <span className="logo-b">PLATFORM</span>
+        <StatusDot />
+        <div className="topbar-right">
+          <button
+            className={`log-toggle-btn ${logOpen ? 'open' : ''}`}
+            onClick={() => setLogOpen(o => !o)}
+            title="Toggle internal log panel"
+          >
+            {logOpen && <span className="dot-live" />}
+            ⬡ logs
+          </button>
+          <span className="model-label">MODEL</span>
+          <select value={agent.currentModel} onChange={e => agent.setCurrentModel(e.target.value)}>
+            {agent.models.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+      </header>
+
+      {/* Sidebar */}
+      <aside className="sidebar">
+        <div className="sidebar-head">
+          <span className="sidebar-title">Sessions</span>
+          <button className="btn-new" onClick={agent.newSession}>+ new</button>
+        </div>
+        <div className="session-list">
+          {agent.sessions.length === 0 ? (
+            <div style={{ padding: '12px 14px', fontSize: '10px', color: 'var(--text-dim)' }}>no sessions</div>
+          ) : agent.sessions.map(s => (
+            <div
+              key={s.id}
+              className={`s-item ${s.id === agent.currentSessionId ? 'active' : ''}`}
+              onClick={() => agent.loadSession(s.id)}
+            >
+              <div className="s-title">{s.title || 'New Chat'}</div>
+              <div className="s-meta">{s.message_count} msg · {(s.model || '').split(':')[0]}</div>
+              <button className="s-delete" onClick={e => { e.stopPropagation(); agent.deleteSession(s.id); }}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div className="ctx-panel">
+          <div className="ctx-head">
+            <span className="ctx-label">Context Engine</span>
+            <span className={`ctx-state ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>
+              ● {agent.contextLines > 0 ? 'warm' : 'cold'}
+            </span>
+          </div>
+          <div className="ctx-bar-track">
+            <div className="ctx-bar-fill" style={{ width: `${Math.min(100, (agent.contextLines / 80) * 100)}%` }} />
+          </div>
+          <div className="ctx-detail">
+            {agent.contextLines === 0 ? 'no context loaded' : `${agent.contextLines} items`}
+          </div>
+          <div className="ctx-head" style={{ marginTop: '18px' }}>
+            <span className="ctx-label">Tools</span>
+            <span className="ctx-state warm">{agent.tools.length}</span>
+          </div>
+          <div className="ctx-detail">
+            {agent.tools.length === 0 ? 'none' : agent.tools.map((t, i) => (
+              <React.Fragment key={t.name}>
+                <span title={t.description} style={{ cursor: 'help' }}>{t.name}</span>
+                {i < agent.tools.length - 1 && ' · '}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
+      </aside>
+
+      {/* Main chat */}
+      <main className="main">
+        <div className="messages">
+          {!agent.currentSessionId && agent.messages.length === 0 ? (
+            <div className="cold-state">
+              <div className="cold-glyph">◈</div>
+              <div className="cold-text">Context engine cold</div>
+              <div className="cold-hint">send a message to begin</div>
+            </div>
+          ) : agent.messages.map((m, idx) => (
+            <div key={m.id || idx} className={`msg ${m.role}`}>
+              <div className="msg-role">{m.role === 'user' ? 'YOU' : 'AGENT'}</div>
+              <div className="msg-body">
+                {m.files?.filter(f => f.dataURL).length ? (
+                  <div className="msg-images">
+                    {m.files!.filter(f => f.dataURL).map(f => (
+                      <img key={f.id} className="msg-img" src={f.dataURL!} title={f.file.name} alt="attachment" />
+                    ))}
+                  </div>
+                ) : null}
+                {m.files?.filter(f => !f.dataURL).length ? (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '5px', marginBottom: '6px' }}>
+                    {m.files!.filter(f => !f.dataURL).map(f => (
+                      <span key={f.id} className="attach-badge ok">📄 {f.file.name}</span>
+                    ))}
+                  </div>
+                ) : null}
+                {m.role === 'user' && !m.blocks?.length && (
+                  <div dangerouslySetInnerHTML={{ __html: processMarkdown(m.content) }} />
+                )}
+                {m.blocks?.map(block => {
+                  switch (block.type) {
+                    case 'text':
+                      return <div key={block.id} dangerouslySetInnerHTML={{ __html: processMarkdown(block.content) }} />;
+                    case 'tool_call':
+                      return (
+                        <div key={block.id} className="tool-event call">
+                          <span className="tool-icon">⚙</span>
+                          <span className="tool-text">
+                            <span className="tool-name">{block.tool}</span>
+                            {block.content && <span className="tool-args"> · {block.content}</span>}
+                          </span>
+                        </div>
+                      );
+                    case 'tool_result':
+                      return (
+                        <div key={block.id} className="tool-event result">
+                          <span className="tool-icon">✓</span>
+                          <span className="tool-text"><span className="tool-name">{block.tool}</span><span className="tool-args"> returned results</span></span>
+                        </div>
+                      );
+                    case 'tool_error':
+                      return (
+                        <div key={block.id} className="tool-event error">
+                          <span className="tool-icon">✗</span>
+                          <span className="tool-text"><span className="tool-name">{block.tool}</span><span className="tool-args"> failed</span></span>
+                        </div>
+                      );
+                    case 'attachment_badge':
+                      return <div key={block.id} className={`attach-badge ${block.content.startsWith('✓') ? 'ok' : 'err'}`}>{block.content}</div>;
+                    case 'compressing':
+                      return (
+                        <div key={block.id} className="compressing-indicator">
+                          <div className="spinner" /><span>compressing context…</span>
+                        </div>
+                      );
+                    default: return null;
+                  }
+                })}
+                {agent.isStreaming && m.role === 'assistant' && idx === agent.messages.length - 1 && <span className="cursor" />}
+              </div>
+            </div>
+          ))}
+          <div ref={agent.bottomRef} />
+        </div>
+
+        <div
+          className="input-area"
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); if (e.dataTransfer.files) agent.addFiles(Array.from(e.dataTransfer.files)); }}
+        >
+          <div className={`attach-preview ${agent.pendingFiles.length > 0 ? 'has-files' : ''}`}>
+            {agent.pendingFiles.map(f => (
+              <div key={f.id} className={`attach-chip ${f.dataURL ? 'image' : ''}`}>
+                {f.dataURL
+                  ? <img src={f.dataURL} style={{ width: 18, height: 18, objectFit: 'cover', borderRadius: 1, marginRight: 2 }} alt="thumb" />
+                  : <span style={{ color: 'var(--text-dim)', marginRight: 3 }}>📄</span>}
+                <span className="attach-chip-name">{f.file.name}</span>
+                <span className="attach-chip-remove" onClick={() => agent.removeFile(f.id)}>✕</span>
+              </div>
+            ))}
+          </div>
+          <div className="input-row">
+            <div className="input-wrap">
+              <span className="input-prefix">›</span>
+              <textarea ref={textareaRef} placeholder="message…" rows={1}
+                value={inputText} onChange={e => setInputText(e.target.value)} onKeyDown={handleKeyDown} />
+            </div>
+            <label className="btn-attach">⊕<input type="file" multiple style={{ display: 'none' }} onChange={e => e.target.files && agent.addFiles(Array.from(e.target.files))} /></label>
+            <button className="btn-send" onClick={handleSend} disabled={agent.isStreaming || (!inputText.trim() && agent.pendingFiles.length === 0)}>Send</button>
+          </div>
+          <div className="input-footer">
+            <span className="input-hint">Enter · Shift+Enter for newline</span>
+            <span className={`ctx-inline ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>● context {agent.contextLines > 0 ? 'warm' : 'cold'}</span>
+          </div>
+        </div>
+      </main>
+
+      {/* Log Panel — slides in as 3rd column */}
+      <LogPanel
+        sessionId={agent.currentSessionId}
+        isOpen={logOpen}
+        onClose={() => setLogOpen(false)}
+      />
+    </div>
+  );
+}
+
+export default App;

@@ -1,0 +1,16 @@
+fastapi
+uvicorn
+httpx
+python-multipart
+pymupdf
+uvloop; platform_system != 'Windows'
+watchfiles
+python-dotenv
+groq
+pydantic
+chromadb
+# Voice pipeline (optional — install when ready to use voice)
+# faster-whisper
+# soundfile
+# numpy
+# websockets
