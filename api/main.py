@@ -70,21 +70,40 @@ async def root():
 
 @app.get("/health")
 async def health():
-    ok = await adapter.health()
+    from llm.adapter_factory import create_adapter
+    ollama = create_adapter("ollama")
+    groq = create_adapter("groq")
+    
+    ollama_ok = await ollama.health()
+    groq_ok = await groq.health()
+    
     return {
-        "status":            "ok" if ok else "degraded",
-        "ollama":            ok,
-        "compression_model": DEFAULT_CHAT_MODEL,
-        "chat_model":        DEFAULT_CHAT_MODEL,
-        "tools":             tool_registry.list_tools(),
+        "status": "ok" if (ollama_ok or groq_ok) else "degraded",
+        "providers": {
+            "ollama": ollama_ok,
+            "groq": groq_ok
+        },
+        "tools": tool_registry.list_tools(),
     }
 
 @app.get("/models")
 async def list_models():
+    from llm.adapter_factory import create_adapter
+    ollama = create_adapter("ollama")
+    groq = create_adapter("groq")
+    
+    models = []
     try:
-        return {"models": await adapter.list_models()}
-    except Exception as e:
-        raise HTTPException(503, f"Cannot reach Ollama: {e}")
+        m_local = await ollama.list_models()
+        models.extend([f"ollama:{m}" for m in m_local] if m_local else [])
+    except: pass
+    
+    try:
+        m_cloud = await groq.list_models()
+        models.extend([f"groq:{m}" for m in m_cloud] if m_cloud else [])
+    except: pass
+    
+    return {"models": models}
 
 @app.get("/tools")
 async def list_tools():

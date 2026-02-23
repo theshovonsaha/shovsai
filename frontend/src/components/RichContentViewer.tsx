@@ -53,8 +53,9 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
     const [showPreview, setShowPreview] = useState(false);
     const [copied, setCopied] = useState(false);
 
-    // HTML and SVG are natively previewable in the browser DOM
-    const isPreviewable = language === 'html' || language === 'svg';
+    // Modular Live View logic: currently HTML and SVG are natively supported in the DOM.
+    // Can be easily expanded to JSON visualizations, charts, etc.
+    const isPreviewable = ['html', 'svg'].includes(language?.toLowerCase());
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(code);
@@ -72,7 +73,7 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
                             onClick={() => setShowPreview(!showPreview)}
                             style={{ background: 'none', border: 'none', color: showPreview ? 'var(--primary, #fff)' : 'inherit', cursor: 'pointer', fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }}
                         >
-                            {showPreview ? 'CODE' : 'PREVIEW'}
+                            {showPreview ? 'CODE' : 'LIVE VIEW'}
                         </button>
                     )}
                     <button

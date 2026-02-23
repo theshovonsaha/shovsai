@@ -99,8 +99,11 @@ async def test_model_override_updates_session():
     tools.has_tools.return_value = False
     tools.build_tools_block.return_value = ""
     
-    # Patch VectorEngine to avoid ChromaDB dependency
-    with patch("engine.core.VectorEngine") as mock_ve:
+    # Patch VectorEngine and create_adapter to avoid side effects and ensure mock usage
+    with patch("engine.core.VectorEngine") as mock_ve, \
+         patch("engine.core.create_adapter") as mock_create_adapter:
+        
+        mock_create_adapter.return_value = adapter
         mock_ve_instance = MagicMock()
         mock_ve_instance.query = AsyncMock(return_value=[])
         mock_ve.return_value = mock_ve_instance

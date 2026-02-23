@@ -8,11 +8,13 @@ import os
 from datetime import datetime
 from typing import AsyncIterator, Optional
 
+from llm.base_adapter import BaseLLMAdapter
 from llm.llm_adapter     import OllamaAdapter, LLMError
 from engine.context_engine  import ContextEngine
 from orchestration.session_manager import SessionManager
 from plugins.tool_registry   import ToolRegistry
 from memory.vector_engine   import VectorEngine
+from llm.adapter_factory    import create_adapter
 from config.logger          import log
 
 # ── Trace Logger ─────────────────────────────────────────────────────────────
@@ -39,10 +41,12 @@ DEFAULT_SYSTEM_PROMPT = """\
 You are a thoughtful, capable AI assistant.
 
 Tool use rules:
-- When you need a tool, output ONLY the JSON call on its own line, then STOP.
+- When you need to use tools, output ONLY the JSON calls, one after another, then STOP.
 - Format: {"tool": "<n>", "arguments": {<args>}}
+- You MAY output multiple tools back-to-back if you want to perform multiple actions simultaneously. (e.g. `{"tool": "a", ...}\n{"tool": "b", ...}`)
 - CRITICAL: Never write "Tool result:" or pretend to be the system. You are the ASSISTANT. You CANNOT execute tools yourself.
-- After calling a tool, you must STOP generating text. The system will reply to you with the results.
+- After calling a tool or tools, you must STOP generating text. The system will reply to you with the results.
+- Live View: If you want to present data structurally or visually (e.g. an SVG diagram, HTML table, mindmap), wrap the code inside standard markdown blocks like ```html or ```svg. The system will render this as a Live View to the user.
 
 Memory rules:
 - Session Context contains compressed facts from this active conversation.
@@ -66,6 +70,7 @@ class AgentCore:
         session_manager: SessionManager,
         tool_registry:   ToolRegistry,
         default_model:   str = "llama3.2",
+        embed_model:     str = "nomic-embed-text",
         default_system_prompt: str = None,
     ):
         self.adapter   = adapter
@@ -73,6 +78,7 @@ class AgentCore:
         self.sessions  = session_manager
         self.tools     = tool_registry
         self.def_model = default_model
+        self.embed_model = embed_model
         self.def_system_prompt = default_system_prompt or DEFAULT_SYSTEM_PROMPT
 
     async def chat_stream(
@@ -111,8 +117,17 @@ class AgentCore:
         error_msg     = None
 
         async with session.lock:
+            # ── Dynamic Adapter Selection ─────────────────────────────────────
+            # If the requested model suggests a different provider than current adapter
+            current_use_adapter = self.adapter
+            
+            # Smart switching: if model is gpt-* use OpenAI, if llama-3.3* or prefix groq: use Groq
+            if model:
+                if (":" in model) or ("gpt-" in model) or ("llama-3.3" in model) or ("mixtral" in model):
+                    current_use_adapter = create_adapter(provider=model)
+            
             # ── Vector RAG ────────────────────────────────────────────────────
-            ve = VectorEngine(sid, agent_id=session.agent_id)
+            ve = VectorEngine(sid, agent_id=session.agent_id, model=self.embed_model)
             historical_anchors = await ve.query(user_message, limit=3)
 
             if historical_anchors:
@@ -144,8 +159,9 @@ class AgentCore:
 
             try:
                 async for event in self._agent_loop(
-                    model=model,  # BUG FIX: use requested model, not frozen session.model
+                    model=model,
                     messages=messages,
+                    adapter=current_use_adapter,
                     search_backend=search_backend,
                     images=images,
                     agent_id=session.agent_id,
@@ -319,6 +335,7 @@ class AgentCore:
         self,
         model:          str,
         messages:       list[dict],
+        adapter:        Optional[BaseLLMAdapter] = None,
         search_backend: Optional[str] = None,
         images:         Optional[list[str]] = None,
         agent_id:       str = "default",
@@ -327,6 +344,7 @@ class AgentCore:
         tool_turn = 0
         failed_tools: dict[str, int] = {}
         sid = session_id
+        current_adapter = adapter or self.adapter
 
         while True:
             turn_buffer = ""
@@ -334,7 +352,7 @@ class AgentCore:
 
             log("llm", sid, f"Streaming turn {tool_turn} · model={model}")
 
-            async for token in self.adapter.stream(model=model, messages=messages, images=turn_images):
+            async for token in current_adapter.stream(model=model, messages=messages, images=turn_images):
                 turn_buffer += token
                 yield _ev("token", content=token)
 
@@ -345,62 +363,77 @@ class AgentCore:
                     log("agent", sid, f"Max tool turns ({MAX_TOOL_TURNS}) reached", level="warn")
                 break
 
-            call = self.tools.detect_tool_call(turn_buffer)
-            if not call:
+            calls = self.tools.detect_tool_calls(turn_buffer)
+            if not calls:
                 log("agent", sid, "No tool call detected — turn complete")
                 break
 
-            yield _ev("tool_call", tool_name=call.tool_name, arguments=call.arguments)
+            for call in calls:
+                yield _ev("tool_call", tool_name=call.tool_name, arguments=call.arguments)
+            
             yield _ev("retract_last_tokens")
 
             # BUG FIX: emit internal event so chat_stream can clean full_response
-            # Strip the tool-call JSON that was already streamed to the UI
+            # Strip the tool-call JSONs that were already streamed to the UI
             clean = turn_buffer
-            if call.raw_json in clean:
-                clean = clean[:clean.index(call.raw_json)].rstrip()
+            for call in calls:
+                if call.raw_json in clean:
+                    clean = clean[:clean.index(call.raw_json)].rstrip()
             yield {"type": "_retract_response", "clean_response": clean}
 
             tool_turn += 1
 
-            if call.tool_name == "web_search" and search_backend and search_backend != "auto":
-                call.arguments["backend"] = search_backend
-                log("tool", sid, f"Overriding search backend → {search_backend}")
+            # Execute all tools concurrently or sequentially
+            combined_results = []
+            
+            for call in calls:
+                if call.tool_name == "web_search" and search_backend and search_backend != "auto":
+                    call.arguments["backend"] = search_backend
+                    log("tool", sid, f"Overriding search backend → {search_backend}")
 
-            args_summary = ", ".join(f"{k}={str(v)[:40]}" for k, v in call.arguments.items())
-            log("tool", sid, f"Calling {call.tool_name}({args_summary})")
+                args_summary = ", ".join(f"{k}={str(v)[:40]}" for k, v in call.arguments.items())
+                log("tool", sid, f"Calling {call.tool_name}({args_summary})")
 
-            yield _ev("tool_running", tool_name=call.tool_name)
-            result = await self.tools.execute(call)
+                yield _ev("tool_running", tool_name=call.tool_name)
+                result = await self.tools.execute(call)
 
-            if result.success:
-                log("tool", sid, f"{call.tool_name} → {len(result.content)} chars returned", level="ok")
-            else:
-                log("tool", sid, f"{call.tool_name} failed: {result.content[:120]}", level="error")
+                if result.success:
+                    log("tool", sid, f"{call.tool_name} → {len(result.content)} chars returned", level="ok")
+                else:
+                    log("tool", sid, f"{call.tool_name} failed: {result.content[:120]}", level="error")
 
-            if not result.success:
-                failed_tools[call.tool_name] = failed_tools.get(call.tool_name, 0) + 1
-            else:
-                failed_tools[call.tool_name] = 0
+                if not result.success:
+                    failed_tools[call.tool_name] = failed_tools.get(call.tool_name, 0) + 1
+                else:
+                    failed_tools[call.tool_name] = 0
 
-            pivot_msg = ""
-            if failed_tools.get(call.tool_name, 0) >= 3:
-                log("agent", sid, f"Solvability guard: hard pivot on {call.tool_name}", level="warn")
-                pivot_msg = (
-                    f"\n\n[SYSTEM: Tool '{call.tool_name}' failed 3 times. "
-                    "Stop attempting it. Answer with what you know and explain the limitation.]"
+                pivot_msg = ""
+                if failed_tools.get(call.tool_name, 0) >= 3:
+                    log("agent", sid, f"Solvability guard: hard pivot on {call.tool_name}", level="warn")
+                    pivot_msg = (
+                        f"\n\n[SYSTEM: Tool '{call.tool_name}' failed 3 times. "
+                        "Stop attempting it. Answer with what you know and explain the limitation.]"
+                    )
+
+                yield _ev("tool_result", tool_name=call.tool_name, success=result.success)
+                
+                # Assemble the XML result block for this specific tool call
+                combined_results.append(
+                    f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
+                    f"{result.content}\n"
+                    f"</SYSTEM_TOOL_RESULT>"
+                    f"{pivot_msg}"
                 )
 
-            yield _ev("tool_result", tool_name=call.tool_name, success=result.success)
-
-            messages.append({"role": "assistant", "content": call.raw_json})
+            # Append the agent's raw JSONs back into the message history
+            messages.append({"role": "assistant", "content": "\n".join(c.raw_json for c in calls)})
+            
+            # Inject the combined tool results block for the next turn
             messages.append({
                 "role": "user",
                 "content": (
-                    f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
-                    f"{result.content}\n"
-                    f"</SYSTEM_TOOL_RESULT>\n\n"
-                    f"Read the result above and write your response to the user. Do not repeat the JSON tool call."
-                    f"{pivot_msg}"
+                    "\n\n".join(combined_results) +
+                    "\n\nRead the result(s) above and write your response to the user. Do not repeat the JSON tool call."
                 ),
             })
 

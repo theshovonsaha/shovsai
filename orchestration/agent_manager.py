@@ -60,6 +60,7 @@ class AgentManager:
             session_manager=self.sessions,
             tool_registry=filtered_registry,
             default_model=config.model,
+            embed_model=config.embed_model,
             default_system_prompt=config.system_prompt,
         )
 

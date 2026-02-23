@@ -164,6 +164,15 @@ class ToolRegistry:
         Uses brace-counting JSON scanner — handles nested objects correctly.
         Returns first valid tool call found, or None.
         """
+        calls = self.detect_tool_calls(text)
+        return calls[0] if calls else None
+
+    def detect_tool_calls(self, text: str) -> list[ToolCall]:
+        """
+        Parse LLM output for all tool call JSON blocks.
+        Returns a list of all valid tool calls found.
+        """
+        calls = []
         candidates = _extract_json_objects(text)
         for obj, original_text in candidates:
             tool_name = obj.get("tool")
@@ -174,12 +183,13 @@ class ToolRegistry:
                 and isinstance(arguments, dict)
                 and tool_name in self._tools
             ):
-                return ToolCall(
+                calls.append(ToolCall(
                     tool_name=tool_name,
                     arguments=arguments,
                     raw_json=original_text,
-                )
-        return None
+                ))
+        return calls
+
 
     async def execute(self, call: ToolCall) -> ToolResult:
         """Execute a tool call and return a ToolResult."""

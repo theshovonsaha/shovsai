@@ -20,24 +20,27 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     Create and return the appropriate LLM adapter.
     
     Args:
-        provider: Force a specific provider. If None, auto-detect from env.
-                  Values: "ollama", "openai", "groq"
+        provider: Force a specific provider or pass a model string with prefix. 
+                  Prefixes: "ollama:", "openai:", "groq:"
+                  Values: "ollama", "openai", "groq", "auto"
     """
+    if provider and ":" in provider:
+        p_part = provider.split(":")[0].lower()
+        if p_part in ["ollama", "openai", "groq"]:
+            provider = p_part
+
     provider = provider or os.getenv("LLM_PROVIDER", "auto")
 
     if provider == "openai" or (provider == "auto" and os.getenv("OPENAI_API_KEY")):
         from llm.openai_adapter import OpenAIAdapter
-        print("[AdapterFactory] Using OpenAI adapter")
         return OpenAIAdapter()
 
-    if provider == "groq" or (provider == "auto" and os.getenv("GROQ_API_KEY") and not os.getenv("OPENAI_API_KEY")):
+    if provider == "groq" or (provider == "auto" and os.getenv("GROQ_API_KEY")):
         from llm.groq_adapter import GroqLLMAdapter
-        print("[AdapterFactory] Using Groq adapter")
         return GroqLLMAdapter()
 
     # Default: Ollama (local, no key required)
     from llm.llm_adapter import OllamaAdapter
-    print("[AdapterFactory] Using Ollama adapter (local)")
     return OllamaAdapter()
 
 

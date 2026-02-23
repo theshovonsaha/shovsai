@@ -9,9 +9,12 @@ EMBED_MODEL = "nomic-embed-text"
 DB_PATH     = "./chroma_db"
 
 class VectorEngine:
-    def __init__(self, session_id: str, agent_id: str = "default"):
+    def __init__(self, session_id: str, agent_id: str = "default", model: str = "nomic-embed-text"):
+        from config.config import cfg
         self.session_id = session_id
         self.agent_id   = agent_id
+        self.model      = model
+        self.base_url   = cfg.OLLAMA_BASE_URL
         self.client     = chromadb.PersistentClient(path=DB_PATH)
         self._ensure_collection()
 
@@ -26,8 +29,8 @@ class VectorEngine:
     async def _get_embedding(self, text: str) -> List[float]:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                f"{OLLAMA_BASE}/api/embeddings",
-                json={"model": EMBED_MODEL, "prompt": text}
+                f"{self.base_url}/api/embeddings",
+                json={"model": self.model, "prompt": text}
             )
             resp.raise_for_status()
             return resp.json()["embedding"]

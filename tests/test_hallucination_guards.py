@@ -28,21 +28,22 @@ async def test_solvability_guard_pivot_logic():
     
     tools = MagicMock()
     tools.has_tools.return_value = True
-    # detect_tool_call should return a call for the first 3 matchers
-    call = MagicMock(tool_name="test_tool", raw_json='{"tool":"test_tool"}', arguments={})
-    tools.detect_tool_call.side_effect = [call, call, call, None]
+    # detect_tool_calls (plural) should return a list of call objects
+    from plugins.tool_registry import ToolCall
+    call = ToolCall(tool_name="test_tool", raw_json='{"tool":"test_tool", "arguments":{}}', arguments={})
+    tools.detect_tool_calls.side_effect = [[call], [call], [call], []]
     
     # execute should return failure for all 3
     result = MagicMock(tool_name="test_tool", success=False, content="Error 404")
     tools.execute = AsyncMock(return_value=result)
     
-    agent = AgentCore(adapter, MagicMock(), MagicMock(), tools)
+    agent = AgentCore(adapter, MagicMock(), MagicMock(), tools, embed_model="test-embed")
     
     # 2. Run the loop
     events = []
     messages = []
     full_output = ""
-    async for ev in agent._agent_loop("model", messages):
+    async for ev in agent._agent_loop("model", messages, adapter=adapter):
         events.append(ev)
         if ev["type"] == "token":
             full_output += ev["content"]
