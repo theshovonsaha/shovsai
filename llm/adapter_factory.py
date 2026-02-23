@@ -18,30 +18,40 @@ from llm.base_adapter import BaseLLMAdapter
 def create_adapter(provider: str = None) -> BaseLLMAdapter:
     """
     Create and return the appropriate LLM adapter.
-    
-    Args:
-        provider: Force a specific provider or pass a model string with prefix. 
-                  Prefixes: "ollama:", "openai:", "groq:"
-                  Values: "ollama", "openai", "groq", "auto"
     """
     if provider and ":" in provider:
         p_part = provider.split(":")[0].lower()
         if p_part in ["ollama", "openai", "groq"]:
             provider = p_part
 
-    provider = provider or os.getenv("LLM_PROVIDER", "auto")
+    # Ensure provider is a string and not None for further comparisons
+    provider_str: str = provider or os.getenv("LLM_PROVIDER", "auto")
 
-    if provider == "openai" or (provider == "auto" and os.getenv("OPENAI_API_KEY")):
+    if provider_str == "openai" or (provider_str == "auto" and os.getenv("OPENAI_API_KEY")):
         from llm.openai_adapter import OpenAIAdapter
         return OpenAIAdapter()
 
-    if provider == "groq" or (provider == "auto" and os.getenv("GROQ_API_KEY")):
+    if provider_str == "groq" or (provider_str == "auto" and os.getenv("GROQ_API_KEY")):
         from llm.groq_adapter import GroqLLMAdapter
         return GroqLLMAdapter()
 
     # Default: Ollama (local, no key required)
     from llm.llm_adapter import OllamaAdapter
     return OllamaAdapter()
+
+
+def strip_provider_prefix(model_name: str) -> str:
+    """
+    Removes the "provider:" prefix if present.
+    Example: "groq:llama-..." -> "llama-..."
+    """
+    if not model_name or ":" not in model_name:
+        return model_name
+    
+    parts = model_name.split(":", 1)
+    if parts[0].lower() in ["ollama", "openai", "groq"]:
+        return parts[1]
+    return model_name
 
 
 def get_default_model(adapter: BaseLLMAdapter) -> str:

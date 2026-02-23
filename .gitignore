@@ -33,6 +33,7 @@ wheels/
 *.db
 *.sqlite3
 agents.db
+sessions.db
 chroma_db/
 memory_graph.db
 

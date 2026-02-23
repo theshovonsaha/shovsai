@@ -93,9 +93,16 @@ class GroqLLMAdapter(BaseLLMAdapter):
         try:
             client = self._get_client()
             models = await client.models.list()
-            return [m.id for m in models.data]
+            # Filter and sort to prioritize production models
+            ids = [m.id for m in models.data]
+            return ids if ids else ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
         except Exception:
-            return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "mixtral-8x7b-32768"]
+            return [
+                "llama-3.3-70b-versatile", 
+                "llama-3.1-8b-instant", 
+                "mixtral-8x7b-32768", 
+                "groq/compound-mini"
+            ]
 
     async def health(self) -> bool:
         if not self.api_key:

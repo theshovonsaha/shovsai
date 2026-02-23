@@ -14,7 +14,7 @@ from engine.context_engine  import ContextEngine
 from orchestration.session_manager import SessionManager
 from plugins.tool_registry   import ToolRegistry
 from memory.vector_engine   import VectorEngine
-from llm.adapter_factory    import create_adapter
+from llm.adapter_factory    import create_adapter, strip_provider_prefix
 from config.logger          import log
 
 # ── Trace Logger ─────────────────────────────────────────────────────────────
@@ -121,10 +121,17 @@ class AgentCore:
             # If the requested model suggests a different provider than current adapter
             current_use_adapter = self.adapter
             
-            # Smart switching: if model is gpt-* use OpenAI, if llama-3.3* or prefix groq: use Groq
+            # Smart switching logic:
             if model:
-                if (":" in model) or ("gpt-" in model) or ("llama-3.3" in model) or ("mixtral" in model):
+                # 1. Explicit prefix takes priority
+                if ":" in model:
                     current_use_adapter = create_adapter(provider=model)
+                # 2. Known model patterns for cloud providers
+                elif any(p in model.lower() for p in ["gpt-", "llama-3.3", "mixtral", "groq/"]):
+                    current_use_adapter = create_adapter(provider="groq" if "groq/" in model or "llama-3.3" in model or "mixtral" in model else "openai")
+            
+            # Use clean model name for API calls
+            clean_model = strip_provider_prefix(model)
             
             # ── Vector RAG ────────────────────────────────────────────────────
             ve = VectorEngine(sid, agent_id=session.agent_id, model=self.embed_model)
@@ -159,7 +166,7 @@ class AgentCore:
 
             try:
                 async for event in self._agent_loop(
-                    model=model,
+                    model=clean_model,
                     messages=messages,
                     adapter=current_use_adapter,
                     search_backend=search_backend,
