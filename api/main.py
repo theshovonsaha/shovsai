@@ -17,6 +17,8 @@ from pydantic import BaseModel, Field
 from typing import Optional, List
 
 from engine.core import AgentCore
+from orchestration.agent_profiles import ProfileManager
+from orchestration.orchestrator import AgenticOrchestrator
 from llm.llm_adapter import OllamaAdapter
 from engine.context_engine import ContextEngine
 from orchestration.session_manager import SessionManager
@@ -44,13 +46,15 @@ session_manager = SessionManager(max_sessions=200)
 context_engine  = ContextEngine(adapter=adapter, compression_model=FALLBACK_CHAT_MODEL)
 file_processor  = FileProcessor()
 profile_manager = ProfileManager()
+orchestrator    = AgenticOrchestrator(adapter=adapter)
 
 agent_manager   = AgentManager(
     profiles=profile_manager,
     sessions=session_manager,
     context_engine=context_engine,
     adapter=adapter,
-    global_registry=tool_registry
+    global_registry=tool_registry,
+    orchestrator=orchestrator
 )
 
 # ── App ───────────────────────────────────────────────────────────────────────
@@ -147,8 +151,11 @@ async def chat_stream(
     model:         Optional[str]    = Form(None),
     system_prompt: Optional[str]    = Form(None),
     search_backend: Optional[str]   = Form(None),
-    search_engine:  Optional[str]   = Form(None), # Added form field
+    search_engine:  Optional[str]   = Form(None),
     force_memory:   Optional[bool]  = Form(False),
+    use_planner:    Optional[bool]  = Form(True),
+    planner_model:  Optional[str]   = Form(None),
+    context_model:  Optional[str]   = Form("deepseek-r1:8b"),
     forced_tools_json: Optional[str] = Form(None),
     files:         List[UploadFile] = File(default=[]),
 ):
@@ -184,8 +191,11 @@ async def chat_stream(
                 model=model, 
                 system_prompt=system_prompt,
                 search_backend=search_backend,
-                search_engine=search_engine, # PASS TO CORE
+                search_engine=search_engine,
                 force_memory=force_memory,
+                use_planner=use_planner,
+                planner_model=planner_model,
+                context_model=context_model,
                 forced_tools=forced_tools,
                 images=image_b64s or None,
             ):
@@ -196,6 +206,15 @@ async def chat_stream(
 
     return StreamingResponse(generate(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+@app.post("/sessions/{session_id}/clear_context")
+async def clear_session_context(session_id: str):
+    """Purge the compressed memory of a specific session."""
+    try:
+        agent_manager.session_manager.update_context(session_id, "")
+        return {"status": "ok", "message": "Context purged"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/sessions")
 async def list_sessions(agent_id: Optional[str] = None):

@@ -71,6 +71,24 @@ const ThoughtBlock = ({ content }: { content: string }) => {
   );
 };
 
+const PlanBlock = ({ content }: { content: string }) => {
+  const [expanded, setExpanded] = React.useState(true);
+  return (
+    <div className={`plan-block ${expanded ? 'expanded' : ''}`}>
+      <div className="plan-header" onClick={() => setExpanded(!expanded)}>
+        <span className="plan-icon">◈</span>
+        <span className="plan-label">STRATEGY</span>
+        <span className="plan-toggle">{expanded ? '▴' : '▾'}</span>
+      </div>
+      {expanded && (
+        <div className="plan-content">
+          <RichContentViewer content={content} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 function App() {
   const agent = useAgent();
   const [inputText, setInputText] = useState('');
@@ -218,6 +236,14 @@ function App() {
             contextLines={agent.contextLines}
             currentSearchEngine={agent.currentSearchEngine}
             setCurrentSearchEngine={agent.setCurrentSearchEngine}
+            models={agent.models}
+            usePlanner={agent.usePlanner}
+            setUsePlanner={agent.setUsePlanner}
+            plannerModel={agent.plannerModel}
+            setPlannerModel={agent.setPlannerModel}
+            contextModel={agent.contextModel}
+            setContextModel={agent.setContextModel}
+            clearSessionContext={agent.clearSessionContext}
           />
         )}
       </aside>
@@ -258,6 +284,8 @@ function App() {
                       return <RichContentViewer key={block.id} content={block.content} />;
                     case 'thought':
                       return <ThoughtBlock key={block.id} content={block.content} />;
+                    case 'plan':
+                      return <PlanBlock key={block.id} content={block.content} />;
                     case 'tool_call':
                       return <ToolEvent key={block.id} type="call" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'tool_result':

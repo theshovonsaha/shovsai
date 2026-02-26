@@ -16,7 +16,7 @@ export interface Attachment {
 }
 
 export interface MessageBlock {
-    type: 'text' | 'thought' | 'tool_call' | 'tool_result' | 'tool_error' | 'attachment_badge' | 'compressing';
+    type: 'text' | 'thought' | 'plan' | 'tool_call' | 'tool_result' | 'tool_error' | 'attachment_badge' | 'compressing';
     content: string;
     tool?: string;
     id: string;
@@ -45,6 +45,11 @@ export function useAgent() {
     const [isStreaming, setIsStreaming] = useState(false);
     const [pendingFiles, setPendingFiles] = useState<Attachment[]>([]);
     const [forcedTools, setForcedTools] = useState<string[]>([]);
+
+    // V10 Layer Controls
+    const [usePlanner, setUsePlanner] = useState<boolean>(localStorage.getItem('shovs_use_planner') !== 'false');
+    const [plannerModel, setPlannerModel] = useState<string>(localStorage.getItem('shovs_planner_model') || '');
+    const [contextModel, setContextModel] = useState<string>(localStorage.getItem('shovs_context_model') || 'deepseek-r1:8b');
 
     // Voice / Jarvis States
     const [isListening, setIsListening] = useState(false);
@@ -76,6 +81,18 @@ export function useAgent() {
     useEffect(() => {
         localStorage.setItem('shovs_search_engine', currentSearchEngine);
     }, [currentSearchEngine]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_use_planner', usePlanner.toString());
+    }, [usePlanner]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_planner_model', plannerModel);
+    }, [plannerModel]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_context_model', contextModel);
+    }, [contextModel]);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -140,6 +157,16 @@ export function useAgent() {
         } catch (e) { console.error(e); }
     };
 
+    const clearSessionContext = async () => {
+        if (!currentSessionId) return;
+        try {
+            await fetch(`/api/sessions/${currentSessionId}/clear_context`, { method: 'POST' });
+            setContextLines(0);
+        } catch (e) {
+            console.error('Failed to clear context', e);
+        }
+    };
+
     const newSession = () => {
         if (isSendingRef.current) return;
         setCurrentSessionId(null);
@@ -200,6 +227,10 @@ export function useAgent() {
             fd.append('model', currentModel);
             fd.append('search_backend', currentSearchBackend);
             fd.append('search_engine', currentSearchEngine); // PASS TO BACKEND!
+            fd.append('planner_model', plannerModel);
+            fd.append('context_model', contextModel);
+            fd.append('use_planner', usePlanner.toString());
+
             fd.append('forced_tools_json', JSON.stringify(forcedTools));
             filesToSend.forEach(f => fd.append('files', f.file));
 
@@ -242,6 +273,13 @@ export function useAgent() {
                         switch (ev.type) {
                             case 'session':
                                 setCurrentSessionId(ev.session_id);
+                                break;
+
+                            case 'plan':
+                                addBlock({
+                                    type: 'plan',
+                                    content: ev.strategy || 'Planning strategy...'
+                                });
                                 break;
 
                             case 'attachment':
@@ -538,6 +576,10 @@ export function useAgent() {
         isListening, speaking, voiceStatus,
         lastUserText, currentToken, lastAgentResponse,
         startRecording, stopRecording, stopSpeaking,
+        usePlanner, setUsePlanner,
+        plannerModel, setPlannerModel,
+        contextModel, setContextModel,
+        clearSessionContext,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,
     };

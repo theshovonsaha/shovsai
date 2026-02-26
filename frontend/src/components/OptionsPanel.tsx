@@ -15,13 +15,29 @@ interface OptionsPanelProps {
     contextLines: number;
     currentSearchEngine: string;
     setCurrentSearchEngine: (engine: string) => void;
+    models: Record<string, string[]>;
+    usePlanner: boolean;
+    setUsePlanner: (val: boolean) => void;
+    plannerModel: string;
+    setPlannerModel: (val: string) => void;
+    contextModel: string;
+    setContextModel: (val: string) => void;
+    clearSessionContext: () => void;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
     sessionId,
     contextLines,
     currentSearchEngine,
-    setCurrentSearchEngine
+    setCurrentSearchEngine,
+    models,
+    usePlanner,
+    setUsePlanner,
+    plannerModel,
+    setPlannerModel,
+    contextModel,
+    setContextModel,
+    clearSessionContext
 }) => {
     const [memories, setMemories] = useState<Memory[]>([]);
     const [total, setTotal] = useState(0);
@@ -155,6 +171,74 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
                             <option value="searxng">SearxNG</option>
                         </select>
                         <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>Select the engine used by the web_search tool. Ensure API keys for Tavily or Brave are set in your backend .env if selected.</p>
+                    </div>
+
+                    <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <label className="settings-label" style={{ fontSize: '13px', fontWeight: 600 }}>Manager Agent (Orchestration)</label>
+                            <input
+                                type="checkbox"
+                                checked={usePlanner}
+                                onChange={e => setUsePlanner(e.target.checked)}
+                                style={{ transform: 'scale(1.2)', cursor: 'pointer' }}
+                            />
+                        </div>
+                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>When enabled, the agent uses a specialized "Planner" layer to proactively select tools before execution.</p>
+
+                        {usePlanner && (
+                            <div style={{ marginTop: '12px' }}>
+                                <label className="settings-label" style={{ display: 'block', marginBottom: '6px', fontSize: '12px' }}>Planner Model</label>
+                                <select
+                                    className="settings-select"
+                                    value={plannerModel}
+                                    onChange={e => setPlannerModel(e.target.value)}
+                                    style={{ width: '100%', padding: '6px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '12px' }}
+                                >
+                                    <option value="">Matches Session Model</option>
+                                    {Object.entries(models).map(([provider, names]) => (
+                                        <optgroup key={provider} label={provider.toUpperCase()}>
+                                            {names.map(name => (
+                                                <option key={name} value={`${provider}:${name}`}>{name}</option>
+                                            ))}
+                                        </optgroup>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Context Engine Intelligence</label>
+                        <select
+                            className="settings-select"
+                            value={contextModel}
+                            onChange={e => setContextModel(e.target.value)}
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}
+                        >
+                            {Object.entries(models).map(([provider, names]) => (
+                                <optgroup key={provider} label={provider.toUpperCase()}>
+                                    {names.map(name => (
+                                        <option key={name} value={`${provider}:${name}`}>{name}</option>
+                                    ))}
+                                </optgroup>
+                            ))}
+                        </select>
+                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>The model used for background memory compression and fact extraction (Default: DeepSeek R1).</p>
+                    </div>
+
+                    <div className="settings-card" style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                        <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Memory Controls</label>
+                        <button
+                            className="memory-clear-btn"
+                            style={{ width: '100%', padding: '10px' }}
+                            onClick={() => {
+                                if (window.confirm("Are you sure you want to purge the compressed memory of this session? Conversation history will remain.")) {
+                                    clearSessionContext();
+                                }
+                            }}
+                        >
+                            🗑 Purge Session Context
+                        </button>
                     </div>
                 </div>
             )}

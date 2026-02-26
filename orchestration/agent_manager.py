@@ -11,6 +11,7 @@ from plugins.tool_registry import ToolRegistry, Tool
 from orchestration.session_manager import SessionManager
 from engine.context_engine import ContextEngine
 from llm.llm_adapter import OllamaAdapter
+from orchestration.orchestrator import AgenticOrchestrator
 
 class AgentManager:
     def __init__(
@@ -20,12 +21,14 @@ class AgentManager:
         context_engine:  ContextEngine,
         adapter:         OllamaAdapter,
         global_registry: ToolRegistry,
+        orchestrator:    Optional[AgenticOrchestrator] = None,
     ):
         self.profiles        = profiles
         self.sessions        = sessions
         self.ctx_eng         = context_engine
         self.adapter         = adapter
         self.global_registry = global_registry
+        self.orch            = orchestrator
         self._agent_cache: dict[str, AgentCore] = {}  # Cache agent instances
 
     def get_agent_instance(self, agent_id: str = "default") -> AgentCore:
@@ -59,6 +62,7 @@ class AgentManager:
             context_engine=self.ctx_eng,
             session_manager=self.sessions,
             tool_registry=filtered_registry,
+            orchestrator=self.orch,
             default_model=config.model,
             embed_model=config.embed_model,
             default_system_prompt=config.system_prompt,

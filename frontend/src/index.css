@@ -2504,3 +2504,62 @@ textarea::placeholder {
     background: rgba(139, 92, 246, 0.05);
     border-left-color: var(--accent1);
 }
+
+/* --- Plan Block (V10 Manager Agent) --- */
+.plan-block {
+  margin: 12px 0;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+
+.plan-block.expanded {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(0, 255, 255, 0.2);
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.3);
+}
+
+.plan-header {
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.02);
+  user-select: none;
+}
+
+.plan-header:hover {
+  background: rgba(0, 255, 255, 0.05);
+}
+
+.plan-icon {
+  font-size: 14px;
+  color: var(--cyan);
+  filter: drop-shadow(0 0 4px var(--cyan));
+}
+
+.plan-label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.plan-toggle {
+  margin-left: auto;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.plan-content {
+  padding: 12px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #00ffff;
+  font-family: 'Inter', sans-serif;
+  font-style: italic;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+}

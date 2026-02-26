@@ -17,6 +17,7 @@ from plugins.tool_registry   import ToolRegistry
 from memory.vector_engine   import VectorEngine
 from memory.semantic_graph  import SemanticGraph
 from llm.adapter_factory    import create_adapter, strip_provider_prefix
+from orchestration.orchestrator import AgenticOrchestrator
 from config.logger          import log
 
 # ── Trace Logger ─────────────────────────────────────────────────────────────
@@ -54,6 +55,11 @@ MAX_TOOL_TURNS = 6
 def _ev(type_: str, **kw) -> dict:
     return {"type": type_, **kw}
 
+def _to_bool(val) -> bool:
+    if isinstance(val, bool): return val
+    if isinstance(val, str):
+        return val.lower() in ("true", "1", "yes", "on")
+    return bool(val)
 
 class AgentCore:
 
@@ -63,6 +69,7 @@ class AgentCore:
         context_engine:  ContextEngine,
         session_manager: SessionManager,
         tool_registry:   ToolRegistry,
+        orchestrator:    Optional[AgenticOrchestrator] = None,
         default_model:   str = "llama3.2",
         embed_model:     str = "nomic-embed-text",
         default_system_prompt: str = None,
@@ -71,6 +78,7 @@ class AgentCore:
         self.ctx_eng   = context_engine
         self.sessions  = session_manager
         self.tools     = tool_registry
+        self.orch      = orchestrator
         self.def_model = default_model
         self.embed_model = embed_model
         self.def_system_prompt = default_system_prompt or DEFAULT_SYSTEM_PROMPT
@@ -87,6 +95,7 @@ class AgentCore:
         images:         Optional[list[str]] = None,
         force_memory:   bool = False,
         forced_tools:   Optional[list[str]] = None,
+        **kw
     ) -> AsyncIterator[dict]:
 
         model         = model or self.def_model
@@ -99,6 +108,11 @@ class AgentCore:
             agent_id=agent_id,
         )
         sid = session.id
+        
+        # New: Layer settings (passed via kwargs or extracted from request)
+        use_planner    = _to_bool(kw.get("use_planner", True))
+        planner_model  = kw.get("planner_model")
+        context_model  = kw.get("context_model", "deepseek-r1:8b")
 
         # BUG FIX: Update session model when user switches models mid-conversation
         if session.model != model:
@@ -138,6 +152,19 @@ class AgentCore:
                 log("rag", sid, "No relevant history anchors found")
 
             current_facts = SemanticGraph().get_current_facts(sid)
+
+            # ── Agentic Planning (Manager Agent) ──────────────────────────────
+            if self.orch and use_planner and not forced_tools:
+                log("agent", sid, "Planner active · determining strategy...", level="info")
+                # Use override planner_model if provided
+                use_p_model = planner_model or clean_model
+                planned_tools = await self.orch.plan(user_message, self.tools.list_tools(), model=use_p_model)
+                if planned_tools:
+                    strategy = f"Strategy: Using {', '.join(planned_tools)} to resolve query."
+                    yield _ev("plan", strategy=strategy, tools=planned_tools)
+                    forced_tools = planned_tools
+            elif not use_planner:
+                log("agent", sid, "Planner bypassed (Direct Mode)")
 
             messages = self._build_messages(
                 system_prompt=session.system_prompt,
@@ -200,6 +227,10 @@ class AgentCore:
 
         # BUG FIX: strip any remaining tool-call JSON and internal reasoning from full_response before storing
         clean_response = self._strip_tool_json(self._strip_reasoning(full_response))
+        
+        # Guard: If response is only tool calls, we still want a placeholder for continuity
+        if not clean_response and full_response:
+            clean_response = "[Tool Execution Turn]"
 
         is_first_exchange = self.sessions.append_message(sid, "user", user_message)
         self.sessions.append_message(sid, "assistant", clean_response)
@@ -216,8 +247,8 @@ class AgentCore:
 
         yield _ev("compressing")
         try:
-            # Decouple: Background compression uses the current session model
-            compression_target = model or "llama3.2"
+            # Decouple: Background compression uses the provided context model layer
+            compression_target = context_model or model or "deepseek-r1:8b"
             log("ctx", sid, f"Compressing exchange with {compression_target}...")
             updated_ctx, keyed_facts, voids = await self.ctx_eng.compress_exchange(
                 user_message=user_message,
@@ -264,16 +295,21 @@ class AgentCore:
 
     @staticmethod
     def _strip_tool_json(text: str) -> str:
-        """Remove tool-call JSON from response text before storing."""
-        # Remove ALL JSON tool calls that appear in the text, including sequences 
-        # like `{"tool": "..."}; {"tool": "..."}`
-        cleaned = text
-        pattern = r'\{\s*"tool"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}[\n\s;]*'
-        cleaned = re.sub(pattern, '', cleaned).strip()
+        """Remove tool-call JSON from response text before storing. Upgraded for V10 logic."""
+        if not text: return ""
         
-        # Sometimes models output standalone semicolons from chained sequences
-        cleaned = re.sub(r'^;+\s*', '', cleaned)
-        return cleaned if cleaned else text
+        # 1. Aggressive regex for standard and slightly malformed tool calls
+        # This catches things like: {"tool": "...", "arguments": {...}} 
+        # but also: {"tool": "..."} without arguments or with trailing semi-colons
+        pattern = r'\{\s*"tool"\s*:\s*"[^"]+".*?\}'
+        cleaned = re.sub(pattern, '', text, flags=re.DOTALL)
+        
+        # 2. Cleanup artifacts left by multiple stripped blocks
+        cleaned = re.sub(r'[\n\s;]+', ' ', cleaned).strip()
+        
+        # 3. If cleaning stripped everything but the text was a JSON block, return empty
+        # otherwise return the cleaned prose
+        return cleaned
 
     @staticmethod
     def _strip_reasoning(text: str) -> str:
@@ -489,7 +525,13 @@ class AgentCore:
         forced_tools:       Optional[list[str]] = None,
         current_facts:      Optional[list[tuple[str, str, str]]] = None,
     ) -> list[dict]:
-        parts = [system_prompt]
+        now = datetime.now().strftime("%A, %B %d, %Y")
+        parts = [
+            f"--- Runtime Metadata ---\n"
+            f"Current Date: {now}\n"
+            f"---\n\n"
+            f"{system_prompt}"
+        ]
 
         if forced_tools:
             tools_str = ", ".join(forced_tools)

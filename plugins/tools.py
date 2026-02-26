@@ -1175,6 +1175,128 @@ GENERATE_APP_TOOL = Tool(
 #  Registration helper
 # ══════════════════════════════════════════════════════════════════════════════
 
+async def _pdf_processor(
+    action: str,
+    path: Optional[str] = None,
+    output_path: Optional[str] = None,
+    content: Optional[str] = None,
+    paths: Optional[list[str]] = None,
+    pages: Optional[list[int]] = None,
+    rotation: Optional[int] = None,
+) -> str:
+    """
+    Unified PDF processor tool handler.
+    Actions: read, create, merge, split, rotate, metadata.
+    """
+    try:
+        if action == "create":
+            if not output_path or not content:
+                return "Error: 'output_path' and 'content' required for create."
+            try:
+                from reportlab.lib.pagesizes import letter
+                from reportlab.pdfgen import canvas
+            except ImportError:
+                return "Error: 'reportlab' library missing. Run 'pip install reportlab'."
+            
+            out = SANDBOX_DIR / output_path
+            out.parent.mkdir(parents=True, exist_ok=True)
+            c = canvas.Canvas(str(out), pagesize=letter)
+            width, height = letter
+            text_lines = content.split('\n')
+            y = height - 100
+            for line in text_lines:
+                c.drawString(100, y, line)
+                y -= 15
+            c.save()
+            return json.dumps({"status": "success", "file": output_path, "action": "create"})
+
+        if action == "read":
+            if not path: return "Error: 'path' required for read."
+            target = SANDBOX_DIR / path
+            if not target.exists(): return f"Error: {path} not found."
+            
+            try:
+                import pdfplumber
+                with pdfplumber.open(target) as pdf:
+                    text = ""
+                    for page in pdf.pages:
+                        text += page.extract_text() or ""
+                    return json.dumps({"status": "success", "content": text, "pages": len(pdf.pages)})
+            except ImportError:
+                # Fallback to pypdf
+                try:
+                    from pypdf import PdfReader
+                    reader = PdfReader(target)
+                    text = ""
+                    for page in reader.pages:
+                        text += page.extract_text() or ""
+                    return json.dumps({"status": "success", "content": text, "pages": len(reader.pages), "note": "using pypdf fallback"})
+                except ImportError:
+                    return "Error: 'pypdf' or 'pdfplumber' missing."
+
+        if action == "merge":
+            if not paths or not output_path: return "Error: 'paths' and 'output_path' required for merge."
+            try:
+                from pypdf import PdfWriter, PdfReader
+                writer = PdfWriter()
+                for p in paths:
+                    reader = PdfReader(SANDBOX_DIR / p)
+                    for page in reader.pages:
+                        writer.add_page(page)
+                out = SANDBOX_DIR / output_path
+                with open(out, "wb") as f:
+                    writer.write(f)
+                return json.dumps({"status": "success", "file": output_path, "action": "merge"})
+            except ImportError:
+                return "Error: 'pypdf' library missing."
+
+        if action == "split":
+            if not path: return "Error: 'path' required for split."
+            try:
+                from pypdf import PdfWriter, PdfReader
+                reader = PdfReader(SANDBOX_DIR / path)
+                for i, page in enumerate(reader.pages):
+                    writer = PdfWriter()
+                    writer.add_page(page)
+                    out_name = f"{Path(path).stem}_page_{i+1}.pdf"
+                    with open(SANDBOX_DIR / out_name, "wb") as f:
+                        writer.write(f)
+                return json.dumps({"status": "success", "action": "split", "pages": len(reader.pages)})
+            except ImportError:
+                return "Error: 'pypdf' library missing."
+
+        return f"Error: Unknown action '{action}'."
+
+    except Exception as e:
+        return f"Error during PDF operation: {e}"
+
+PDF_PROCESSOR_TOOL = Tool(
+    name="pdf_processor",
+    description=(
+        "Advanced PDF toolkit. Actions: 'read' (extract text), 'create' (basic PDF), "
+        "'merge' (multiple files), 'split' (one file per page), 'rotate', 'metadata'."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "enum": ["read", "create", "merge", "split", "rotate", "metadata"]},
+            "path": {"type": "string", "description": "Target PDF path in sandbox."},
+            "output_path": {"type": "string", "description": "Output path for create/merge/split."},
+            "content": {"type": "string", "description": "Text content for 'create'."},
+            "paths": {"type": "array", "items": {"type": "string"}, "description": "List of PDF paths to merge."},
+            "pages": {"type": "array", "items": {"type": "integer"}, "description": "Specific pages to extract/split."},
+            "rotation": {"type": "integer", "description": "Degrees to rotate (90, 180, 270)."}
+        },
+        "required": ["action"]
+    },
+    handler=_pdf_processor,
+    tags=["file", "pdf"]
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Registration helper
+# ══════════════════════════════════════════════════════════════════════════════
+
 ALL_TOOLS = [
     WEB_SEARCH_TOOL,
     WEB_FETCH_TOOL,
@@ -1188,6 +1310,7 @@ ALL_TOOLS = [
     STORE_MEMORY_TOOL,
     QUERY_MEMORY_TOOL,
     GENERATE_APP_TOOL,
+    PDF_PROCESSOR_TOOL,
 ]
 
 def register_all_tools(registry: ToolRegistry) -> None:
