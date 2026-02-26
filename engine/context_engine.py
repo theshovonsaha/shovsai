@@ -35,9 +35,15 @@ Include:
 - Decisions made or tasks agreed on
 - If this is the first exchange: note "First message"
 
-Output: one fact per line starting with "- "
+CRITICAL: If an exchange establishes a durable fact about the user or system, output it as:
+[FACT: <subject> | <predicate> | <object>]
+
+CRITICAL: If a new fact contradicts or updates a prior belief, you MUST void the old one:
+[VOIDS: <subject> | <predicate>]
+
+Output: one fact per line starting with "- " or the exact [FACT:/VOIDS:] markers.
 If nothing new: output exactly: [nothing new]
-No headers. No commentary. Plain bullet points only.\
+No headers. No commentary.\
 """
 
 RECOMPRESSION_PROMPT = """\
@@ -102,14 +108,14 @@ class ContextEngine:
         current_context:   str,
         is_first_exchange: bool = False,
         model:             str = None,  # caller can pass main model
-    ) -> tuple[str, list[dict]]:
+    ) -> tuple[str, list[dict], list[dict]]:
         """
         Compress a new exchange into the existing context.
-        Returns (updated_context_string, list_of_keyed_facts_for_vector_indexing).
+        Returns (updated_context_string, list_of_keyed_facts, list_of_voids).
         """
         # Skip trivial exchanges — but never skip the first one
         if not is_first_exchange and self.is_trivial(user_message, assistant_response):
-            return current_context, []
+            return current_context, [], []
 
         use_model = model or self.compression_model
         cleaned_response = self._clean_response(assistant_response)
@@ -130,7 +136,7 @@ class ContextEngine:
             )
         except Exception as e:
             print(f"[ContextEngine] Compression failed: {e} — skipping")
-            return current_context, []
+            return current_context, [], []
 
         compressed = compressed.strip()
 
@@ -140,15 +146,45 @@ class ContextEngine:
                 # Force-store the first message even if model said nothing new
                 line = f"- First message: \"{user_message.strip()[:100]}\""
                 existing = [l for l in current_context.split("\n") if l.strip()]
-                fact = {"key": "Session Start", "fact": f"First message: {user_message.strip()[:100]}"}
-                return "\n".join(existing + [line]), [fact]
-            return current_context, []
+                fact = {"key": "Session Start", "fact": f"First message: {user_message.strip()[:100]}", "subject": "Session", "predicate": "Start", "object": "User message"}
+                return "\n".join(existing + [line]), [fact], []
+            return current_context, [], []
 
-        # Parse bullet points
+        # Parse bullet points and structural markers
         new_lines = []
         keyed_facts = []
+        voids = []
+
         for line in compressed.split("\n"):
             line = line.strip()
+
+            # 1) Parse VOIDS
+            if line.startswith("[VOIDS:") and line.endswith("]"):
+                parts = [p.strip() for p in line[7:-1].split("|")]
+                if len(parts) >= 2:
+                    voids.append({"subject": parts[0], "predicate": parts[1]})
+                continue
+
+            # 2) Parse FACT
+            if line.startswith("[FACT:") and line.endswith("]"):
+                parts = [p.strip() for p in line[6:-1].split("|")]
+                if len(parts) >= 2:
+                    subj = parts[0]
+                    pred = parts[1]
+                    obj = parts[2] if len(parts) > 2 else ""
+                    key = f"{subj} {pred}".strip()
+                    fact_str = f"{subj} {pred} {obj}".strip()
+                    keyed_facts.append({
+                        "key": key,
+                        "fact": fact_str,
+                        "subject": subj,
+                        "predicate": pred,
+                        "object": obj
+                    })
+                    new_lines.append(f"- {fact_str}")
+                continue
+
+            # 3) Plain bullet points
             if not line.startswith("- ") or len(line) < 4:
                 continue
             new_lines.append(line)
@@ -156,14 +192,20 @@ class ContextEngine:
             fact_text = line[2:].strip()
             words = fact_text.split()[:4]
             key = " ".join(w.capitalize() for w in words) if words else "General"
-            keyed_facts.append({"key": key, "fact": fact_text})
+            keyed_facts.append({
+                "key": key, 
+                "fact": fact_text,
+                "subject": "General",
+                "predicate": "Context",
+                "object": fact_text
+            })
 
         if not new_lines:
             if is_first_exchange:
                 line = f"- First message: \"{user_message.strip()[:100]}\""
                 existing = [l for l in current_context.split("\n") if l.strip()]
-                return "\n".join(existing + [line]), [{"key": "Session Start", "fact": line[2:]}]
-            return current_context, []
+                return "\n".join(existing + [line]), [{"key": "Session Start", "fact": line[2:], "subject": "Session", "predicate": "Start", "object": "First message"}], []
+            return current_context, [], []
 
         existing_lines = [l for l in current_context.split("\n") if l.strip()]
         merged = existing_lines + new_lines
@@ -172,7 +214,7 @@ class ContextEngine:
             print(f"[ContextEngine] Context at {len(merged)} lines — recompressing...")
             merged = await self._recompress("\n".join(merged), use_model)
 
-        return "\n".join(merged), keyed_facts
+        return "\n".join(merged), keyed_facts, voids
 
     async def _recompress(self, context: str, model: str) -> list[str]:
         try:

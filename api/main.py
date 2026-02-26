@@ -135,6 +135,7 @@ async def chat_stream(
     model:         Optional[str]    = Form(None),
     system_prompt: Optional[str]    = Form(None),
     search_backend: Optional[str]   = Form(None),
+    search_engine:  Optional[str]   = Form(None), # Added form field
     force_memory:   Optional[bool]  = Form(False),
     forced_tools_json: Optional[str] = Form(None),
     files:         List[UploadFile] = File(default=[]),
@@ -171,6 +172,7 @@ async def chat_stream(
                 model=model, 
                 system_prompt=system_prompt,
                 search_backend=search_backend,
+                search_engine=search_engine, # PASS TO CORE
                 force_memory=force_memory,
                 forced_tools=forced_tools,
                 images=image_b64s or None,

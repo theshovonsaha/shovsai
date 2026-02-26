@@ -41,6 +41,18 @@ class SemanticGraph:
                     created_at TEXT NOT NULL
                 )
             ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    valid_from INTEGER NOT NULL,
+                    valid_to INTEGER,
+                    created_at TEXT NOT NULL
+                )
+            ''')
             conn.commit()
 
     async def _get_embedding(self, text: str) -> List[float]:
@@ -171,4 +183,39 @@ class SemanticGraph:
         """Wipe the graph."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM memories")
+            conn.execute("DELETE FROM facts")
             conn.commit()
+
+    # ── Temporal Fact Logic (Deterministic Memory) ─────────────────────────
+    def add_temporal_fact(self, session_id: str, subject: str, predicate: str, object_: str, turn: int):
+        """Insert a new fact valid from exactly this turn forward."""
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT INTO facts (session_id, subject, predicate, object, valid_from, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (session_id, subject.strip(), predicate.strip(), object_.strip(), turn, now))
+            conn.commit()
+
+    def void_temporal_fact(self, session_id: str, subject: str, predicate: str, turn: int):
+        """Invalidate the most recent fact matching 'Subject Predicate' starting exactly on this turn."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                UPDATE facts 
+                SET valid_to = ? 
+                WHERE session_id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL
+            ''', (turn, session_id, subject.strip(), predicate.strip()))
+            conn.commit()
+
+    def get_current_facts(self, session_id: str) -> List[Tuple[str, str, str]]:
+        """Return all currently valid facts (un-voided) for this session."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT subject, predicate, object 
+                FROM facts 
+                WHERE session_id = ? AND valid_to IS NULL
+                ORDER BY valid_from ASC
+            ''', (session_id,))
+            return cursor.fetchall()
+

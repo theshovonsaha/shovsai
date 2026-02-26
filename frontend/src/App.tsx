@@ -198,6 +198,8 @@ function App() {
           <OptionsPanel
             sessionId={agent.currentSessionId}
             contextLines={agent.contextLines}
+            currentSearchEngine={agent.currentSearchEngine}
+            setCurrentSearchEngine={agent.setCurrentSearchEngine}
           />
         )}
       </aside>

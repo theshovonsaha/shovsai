@@ -391,14 +391,19 @@ async def _search_exa(query: str, num_results: int) -> Optional[list[dict]]:
 #  UNIFIED SEARCH TOOL  —  auto-fallback chain
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _web_search(query: str, num_results: int = 8, backend: str = "auto") -> str:
+async def _web_search(query: str, num_results: int = 8, backend: str = "auto", search_engine: str = None) -> str:
     """
     Web search with automatic fallback chain.
     backend: "auto" | "searxng" | "brave" | "tavily" | "exa" | "groq"
-
+    
     Auto priority: SearXNG → Brave → Tavily → Exa → Groq
     (SearXNG first because it's local and unlimited; Groq last to save tokens)
     """
+    from plugins.tools import _search_duckduckgo
+    
+    if search_engine and backend == "auto":
+        backend = search_engine.lower()
+        
     print(f"[INTERNAL DETECTION] Starting search for: '{query}' (backend: {backend})")
     num_results = int(num_results)
     results: Optional[list[dict]] = None
@@ -428,16 +433,17 @@ async def _web_search(query: str, num_results: int = 8, backend: str = "auto") -
                 used_backend = name
     else:
         fn_map = {
-            "groq":    _search_groq,
-            "searxng": _search_searxng,
-            "brave":   _search_brave,
-            "tavily":  _search_tavily,
-            "exa":     _search_exa,
+            "groq":       _search_groq,
+            "searxng":    _search_searxng,
+            "brave":      _search_brave,
+            "tavily":     _search_tavily,
+            "exa":        _search_exa,
+            "duckduckgo": _search_duckduckgo,
         }
         if backend not in fn_map:
             return (
                 f"web_search: unknown backend '{backend}'. "
-                "Valid: auto, groq, searxng, brave, tavily, exa"
+                "Valid: auto, groq, searxng, brave, tavily, exa, duckduckgo"
             )
         results = await fn_map[backend](query, num_results)
         used_backend = backend
@@ -464,19 +470,13 @@ async def _web_search(query: str, num_results: int = 8, backend: str = "auto") -
             f"returned no results for: {query}"
         )
 
-    # Format output
-    lines = [f"Search: {query}  [via {used_backend}]\n"]
-    for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] {r['title']}")
-        if r.get("url"):
-            lines.append(f"    {r['url']}")
-        if r.get("snippet"):
-            lines.append(f"    {r['snippet'][:300]}")
-        if r.get("published"):
-            lines.append(f"    Published: {r['published'][:10]}")
-        lines.append("")
-
-    return "\n".join(lines)
+    # Format output as JSON for frontend premium cards
+    return json.dumps({
+        "type": "web_search_results",
+        "query": query,
+        "results": results,
+        "backend": used_backend,
+    })
 
 
 WEB_SEARCH_TOOL = Tool(
@@ -567,6 +567,21 @@ async def _web_fetch(url: str, max_chars: int = 8000, use_jina: bool = True) -> 
     if not url.startswith(("http://", "https://")):
         return f"web_fetch: invalid URL '{url}' — must start with http:// or https://"
 
+    def _format_result(text_content: str) -> str:
+        text_content = str(text_content)
+        is_truncated = len(text_content) > max_chars
+        final_content = text_content[:max_chars]
+        if is_truncated:
+            final_content += f"\n\n[truncated — {len(text_content) - max_chars} more chars]"
+        return json.dumps({
+            "type": "web_fetch_result",
+            "url": url,
+            "content": final_content,
+            "truncated": is_truncated,
+            "total_length": len(text_content),
+            "title": url,
+        })
+
     # ── Jina Reader (Primary — free, best quality) ───────────────────────────
     if use_jina:
         jina_url = f"https://r.jina.ai/{url}"
@@ -585,11 +600,7 @@ async def _web_fetch(url: str, max_chars: int = 8000, use_jina: bool = True) -> 
                 text = resp.text.strip()
 
             if text and len(text) > 100:
-                suffix = (
-                    f"\n\n[truncated — {len(text) - max_chars} more chars]"
-                    if len(text) > max_chars else ""
-                )
-                return text[:max_chars] + suffix
+                return _format_result(text)
         except Exception as e:
             print(f"[web_fetch] Jina Reader failed ({e}), falling back")
 
@@ -597,7 +608,7 @@ async def _web_fetch(url: str, max_chars: int = 8000, use_jina: bool = True) -> 
     if GROQ_KEY:
         content = await _fetch_groq(url, max_chars)
         if content:
-            return content
+            return _format_result(content)
 
     # ── httpx + HTML strip (Fallback) ─────────────────────────────────────────
     try:
@@ -611,7 +622,7 @@ async def _web_fetch(url: str, max_chars: int = 8000, use_jina: bool = True) -> 
             content_type = resp.headers.get("content-type", "")
 
             if "json" in content_type:
-                return json.dumps(resp.json(), indent=2)[:max_chars]
+                return _format_result(json.dumps(resp.json(), indent=2))
 
             html = resp.text
 
@@ -622,12 +633,7 @@ async def _web_fetch(url: str, max_chars: int = 8000, use_jina: bool = True) -> 
         text = re.sub(r"<[^>]+>", " ", html)
         text = re.sub(r"[ \t]+", " ", text)
         text = re.sub(r"\n{3,}", "\n\n", text).strip()
-
-        suffix = (
-            f"\n\n[truncated — {len(text) - max_chars} more chars]"
-            if len(text) > max_chars else ""
-        )
-        return text[:max_chars] + suffix
+        return _format_result(text)
 
     except httpx.HTTPStatusError as e:
         return f"web_fetch: HTTP {e.response.status_code} for {url}"

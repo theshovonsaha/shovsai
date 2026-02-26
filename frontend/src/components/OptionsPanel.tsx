@@ -13,9 +13,16 @@ interface Memory {
 interface OptionsPanelProps {
     sessionId: string | null;
     contextLines: number;
+    currentSearchEngine: string;
+    setCurrentSearchEngine: (engine: string) => void;
 }
 
-export const OptionsPanel: React.FC<OptionsPanelProps> = ({ sessionId, contextLines }) => {
+export const OptionsPanel: React.FC<OptionsPanelProps> = ({
+    sessionId,
+    contextLines,
+    currentSearchEngine,
+    setCurrentSearchEngine
+}) => {
     const [memories, setMemories] = useState<Memory[]>([]);
     const [total, setTotal] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
@@ -23,7 +30,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({ sessionId, contextLi
     const [isSearching, setIsSearching] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [sessionContext, setSessionContext] = useState<string[]>([]);
-    const [activeTab, setActiveTab] = useState<'memory' | 'context'>('memory');
+    const [activeTab, setActiveTab] = useState<'settings' | 'memory' | 'context'>('settings');
     const [confirmClear, setConfirmClear] = useState(false);
 
     const loadMemories = useCallback(async () => {
@@ -111,6 +118,12 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({ sessionId, contextLi
         <div className="options-panel">
             <div className="options-tabs">
                 <button
+                    className={`options-tab ${activeTab === 'settings' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('settings')}
+                >
+                    ⚙ Settings
+                </button>
+                <button
                     className={`options-tab ${activeTab === 'memory' ? 'active' : ''}`}
                     onClick={() => setActiveTab('memory')}
                 >
@@ -125,6 +138,26 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({ sessionId, contextLi
                     {contextLines > 0 && <span className="tab-badge">{contextLines}</span>}
                 </button>
             </div>
+
+            {activeTab === 'settings' && (
+                <div className="options-section">
+                    <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Web Search Engine</label>
+                        <select
+                            className="settings-select"
+                            value={currentSearchEngine}
+                            onChange={(e) => setCurrentSearchEngine(e.target.value)}
+                            style={{ width: '100%', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-color)', background: 'var(--bg-pane)', color: 'var(--text-main)', outline: 'none' }}
+                        >
+                            <option value="duckduckgo">DuckDuckGo (Free)</option>
+                            <option value="tavily">Tavily Search</option>
+                            <option value="brave">Brave Search</option>
+                            <option value="searxng">SearxNG</option>
+                        </select>
+                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>Select the engine used by the web_search tool. Ensure API keys for Tavily or Brave are set in your backend .env if selected.</p>
+                    </div>
+                </div>
+            )}
 
             {activeTab === 'memory' && (
                 <div className="options-section">
@@ -196,6 +229,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({ sessionId, contextLi
 
             {activeTab === 'context' && (
                 <div className="options-section">
+
+                    <h4 className="section-title" style={{ fontSize: '13px', borderBottom: '1px solid var(--border-color)', paddingBottom: '4px', marginBottom: '10px' }}>Context Window</h4>
                     {!sessionId ? (
                         <div className="memory-empty">No active session. Start a chat first.</div>
                     ) : sessionContext.length === 0 ? (

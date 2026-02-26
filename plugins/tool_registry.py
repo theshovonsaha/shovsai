@@ -94,6 +94,23 @@ def _extract_json_objects(text: str) -> list[tuple[dict, str]]:
                             pass
                         break
             j += 1
+
+        # Fallback: if we reached the end of the string but depth > 0
+        # (happens when LLM emits <|tool_call_end|> without closing braces)
+        if depth > 0 and j == len(text):
+            candidate = text[start:]
+            # Strip instruction model stopping tokens if they leaked
+            clean_cand = candidate.split("<|tool")[0].strip()
+            # Guess missing closing braces
+            close_braces = "}" * depth
+            try:
+                parsed = json.loads(clean_cand + close_braces)
+                if isinstance(parsed, dict):
+                    # For original_substring tracking, return the full raw candidate so core can strip it
+                    results.append((parsed, candidate))
+            except json.JSONDecodeError:
+                pass
+
         i = j + 1
     return results
 
@@ -153,7 +170,8 @@ class ToolRegistry:
             "--- Available Tools ---\n"
             "To use a tool, you MUST output ONLY the following JSON on its own line and then STOP:\n"
             '{"tool": "<tool_name>", "arguments": {<args>}}\n\n'
-            "CRITICAL: Do NOT output the tool's schema definition. You must output the actual invocation with real values.\n\n"
+            "CRITICAL: Do NOT output the tool's schema definition. You must output the actual invocation with real values.\n"
+            "CRITICAL: You MUST escape all double quotes (\") inside your JSON strings! For example, write \"<html lang=\\\"en\\\">\" instead of \"<html lang=\"en\">\". Unescaped quotes will break the parser.\n\n"
             f"{doc_string}\n"
             "--- End Tools ---"
         )

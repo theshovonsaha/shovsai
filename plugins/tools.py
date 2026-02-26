@@ -55,11 +55,40 @@ SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
 #  WEB SEARCH  —  DuckDuckGo HTML scrape (no API key)
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _web_search(query: str, num_results: int = 8) -> str:
-    """
-    DuckDuckGo lite HTML search — parses result titles, URLs, snippets.
-    Falls back to DuckDuckGo API endpoint if HTML parse yields nothing.
-    """
+async def _search_tavily(query: str, num_results: int, api_key: str) -> list[dict]:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        resp = await client.post(
+            "https://api.tavily.com/search",
+            json={"api_key": api_key, "query": query, "include_answer": False, "max_results": num_results},
+            headers={"Content-Type": "application/json"}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")} for r in data.get("results", [])]
+
+async def _search_brave(query: str, num_results: int, api_key: str) -> list[dict]:
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        resp = await client.get(
+            "https://api.search.brave.com/res/v1/web/search",
+            params={"q": query, "count": min(num_results, 20)},
+            headers={"Accept": "application/json", "X-Subscription-Token": api_key}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("description", "")} for r in data.get("web", {}).get("results", [])]
+
+async def _search_searxng(query: str, num_results: int, base_url: str) -> list[dict]:
+    url = base_url.rstrip("/") + "/search"
+    async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+        resp = await client.get(
+            url,
+            params={"q": query, "format": "json"}
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")} for r in data.get("results", [])[:num_results]]
+
+async def _search_duckduckgo(query: str, num_results: int) -> list[dict]:
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -67,8 +96,8 @@ async def _web_search(query: str, num_results: int = 8) -> str:
         ),
         "Accept-Language": "en-US,en;q=0.9",
     }
-
-    # Try the DuckDuckGo instant-answer API first (structured JSON)
+    results: list[dict] = []
+    
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             resp = await client.get(
@@ -78,9 +107,6 @@ async def _web_search(query: str, num_results: int = 8) -> str:
             )
             data = resp.json()
 
-        results: list[dict] = []
-
-        # Abstract (featured snippet)
         if data.get("AbstractText"):
             results.append({
                 "title": data.get("Heading", "Answer"),
@@ -88,7 +114,6 @@ async def _web_search(query: str, num_results: int = 8) -> str:
                 "snippet": data["AbstractText"],
             })
 
-        # Related topics
         for topic in data.get("RelatedTopics", []):
             if len(results) >= num_results:
                 break
@@ -98,13 +123,11 @@ async def _web_search(query: str, num_results: int = 8) -> str:
                     "url":     topic.get("FirstURL", ""),
                     "snippet": topic.get("Text", ""),
                 })
-
         if results:
-            return _format_search_results(query, results)
+            return results
     except Exception:
         pass
 
-    # Fallback: DuckDuckGo HTML lite
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
             resp = await client.post(
@@ -114,8 +137,6 @@ async def _web_search(query: str, num_results: int = 8) -> str:
             )
             html = resp.text
 
-        # Parse with regex (no BeautifulSoup dependency)
-        results = []
         block_re = re.compile(
             r'class="result__title".*?href="([^"]+)"[^>]*>(.*?)</a>.*?'
             r'class="result__snippet"[^>]*>(.*?)</span>',
@@ -129,11 +150,33 @@ async def _web_search(query: str, num_results: int = 8) -> str:
             snippet = re.sub(r"<[^>]+>", "", m.group(3)).strip()
             if url and title:
                 results.append({"title": title, "url": url, "snippet": snippet})
+    except Exception:
+        pass
 
-        return _format_search_results(query, results) if results else f"No results found for: {query}"
+    return results
 
+async def _web_search(query: str, num_results: int = 8, backend: str = None, search_engine: str = None) -> str:
+    """
+    Dynamic Web Search using the configured engine.
+    Supports Tavily, Brave, SearxNG, and DuckDuckGo (fallback).
+    """
+    from config.config import cfg
+    engine = (search_engine or cfg.SEARCH_ENGINE).lower()
+    
+    try:
+        if engine == "tavily" and cfg.TAVILY_API_KEY:
+            results = await _search_tavily(query, num_results, cfg.TAVILY_API_KEY)
+        elif engine == "brave" and cfg.BRAVE_SEARCH_KEY:
+            results = await _search_brave(query, num_results, cfg.BRAVE_SEARCH_KEY)
+        elif engine == "searxng" and cfg.SEARXNG_URL:
+            results = await _search_searxng(query, num_results, cfg.SEARXNG_URL)
+        else:
+            engine = "duckduckgo"
+            results = await _search_duckduckgo(query, num_results)
+            
+        return _format_search_results(query, results) if results else f"No results found for: {query} via {engine}."
     except Exception as e:
-        return f"web_search error: {e}"
+        return f"web_search ({engine}) error: {e}"
 
 
 def _format_search_results(query: str, results: list[dict]) -> str:
@@ -1092,7 +1135,7 @@ GENERATE_APP_TOOL = Tool(
     parameters={
         "type": "object",
         "properties": {
-            "html_content": {"type": "string", "description": "The HTML body or full code to render."},
+            "html_content": {"type": "string", "description": "The HTML body. CRITICAL: You MUST escape all double quotes (\") in this string using backslashes (\\\") or the JSON will break."},
             "title": {"type": "string", "description": "The application title."}
         },
         "required": ["html_content"]

@@ -39,6 +39,7 @@ export function useAgent() {
     const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
     const [currentModel, setCurrentModel] = useState<string>('llama3.2');
     const [currentSearchBackend, setCurrentSearchBackend] = useState<string>('auto');
+    const [currentSearchEngine, setCurrentSearchEngine] = useState<string>('duckduckgo');
     const [messages, setMessages] = useState<Message[]>([]);
     const [contextLines, setContextLines] = useState(0);
     const [isStreaming, setIsStreaming] = useState(false);
@@ -173,6 +174,7 @@ export function useAgent() {
             if (activeAgentId) fd.append('agent_id', activeAgentId);
             fd.append('model', currentModel);
             fd.append('search_backend', currentSearchBackend);
+            fd.append('search_engine', currentSearchEngine); // PASS TO BACKEND!
             fd.append('forced_tools_json', JSON.stringify(forcedTools));
             filesToSend.forEach(f => fd.append('files', f.file));
 
@@ -487,6 +489,7 @@ export function useAgent() {
         activeAgentId, setActiveAgentId,
         currentModel, setCurrentModel,
         currentSearchBackend, setCurrentSearchBackend,
+        currentSearchEngine, setCurrentSearchEngine,
         messages, contextLines,
         isStreaming, pendingFiles,
         forcedTools, setForcedTools,

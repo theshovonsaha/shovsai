@@ -24,6 +24,7 @@ class Config:
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
     # ── Search Backends ───────────────────────────────────────────────────
+    SEARCH_ENGINE: str = os.getenv("SEARCH_ENGINE", "duckduckgo")  # duckduckgo|tavily|brave|searxng
     SEARXNG_URL: str = os.getenv("SEARXNG_URL", "")
     BRAVE_SEARCH_KEY: str = os.getenv("BRAVE_SEARCH_KEY", "")
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")

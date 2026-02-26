@@ -14,6 +14,7 @@ from engine.context_engine  import ContextEngine
 from orchestration.session_manager import SessionManager
 from plugins.tool_registry   import ToolRegistry
 from memory.vector_engine   import VectorEngine
+from memory.semantic_graph  import SemanticGraph
 from llm.adapter_factory    import create_adapter, strip_provider_prefix
 from config.logger          import log
 
@@ -88,6 +89,7 @@ class AgentCore:
         model:          Optional[str] = None,
         system_prompt:  Optional[str] = None,
         search_backend: Optional[str] = None,
+        search_engine:  Optional[str] = None, # Added param
         images:         Optional[list[str]] = None,
         force_memory:   bool = False,
         forced_tools:   Optional[list[str]] = None,
@@ -141,6 +143,8 @@ class AgentCore:
             else:
                 log("rag", sid, "No relevant history anchors found")
 
+            current_facts = SemanticGraph().get_current_facts(sid)
+
             messages = self._build_messages(
                 system_prompt=session.system_prompt,
                 context=session.compressed_context,
@@ -151,6 +155,7 @@ class AgentCore:
                 historical_anchors=historical_anchors,
                 force_memory=force_memory,
                 forced_tools=forced_tools,
+                current_facts=current_facts,
             )
 
             prompt_tokens_est = sum(len(m["content"]) for m in messages) // 4
@@ -170,6 +175,7 @@ class AgentCore:
                     messages=messages,
                     adapter=current_use_adapter,
                     search_backend=search_backend,
+                    search_engine=search_engine, # Pass down
                     images=images,
                     agent_id=session.agent_id,
                     session_id=sid,
@@ -216,7 +222,7 @@ class AgentCore:
             # unless specifically overridden. This saves cloud tokens/rate limits.
             compression_target = "llama3.2"
             log("ctx", sid, f"Compressing exchange with {compression_target}...")
-            updated_ctx, keyed_facts = await self.ctx_eng.compress_exchange(
+            updated_ctx, keyed_facts, voids = await self.ctx_eng.compress_exchange(
                 user_message=user_message,
                 assistant_response=clean_response,
                 current_context=session.compressed_context,
@@ -225,7 +231,19 @@ class AgentCore:
             )
             self.sessions.update_context(sid, updated_ctx)
             lines = len([l for l in updated_ctx.split("\n") if l.strip()])
-            log("ctx", sid, f"Context updated · {lines} lines · {len(keyed_facts)} new facts", level="ok")
+            log("ctx", sid, f"Context updated · {lines} lines · {len(keyed_facts)} new facts, {len(voids)} voids", level="ok")
+
+            try:
+                sg = SemanticGraph()
+                for void in voids:
+                    sg.void_temporal_fact(sid, void["subject"], void["predicate"], session.message_count)
+                    log("ctx", sid, f"Voided fact: {void['subject']} | {void['predicate']}", level="ok")
+                for item in keyed_facts:
+                    # Save explicitly mapped [FACT]s to the deterministic table
+                    if item.get("subject") and item.get("predicate") and item.get("subject") != "General":
+                        sg.add_temporal_fact(sid, item["subject"], item["predicate"], item.get("object", ""), session.message_count)
+            except Exception as e:
+                log("ctx", sid, f"Database deterministic facts error: {e}", level="error")
 
             if keyed_facts:
                 ve = VectorEngine(sid, agent_id=session.agent_id)
@@ -347,6 +365,7 @@ class AgentCore:
         messages:       list[dict],
         adapter:        Optional[BaseLLMAdapter] = None,
         search_backend: Optional[str] = None,
+        search_engine:  Optional[str] = None,
         images:         Optional[list[str]] = None,
         agent_id:       str = "default",
         session_id:     str = "unknown",
@@ -406,9 +425,11 @@ class AgentCore:
             combined_results = []
             
             for call in calls:
-                if call.tool_name == "web_search" and search_backend and search_backend != "auto":
-                    call.arguments["backend"] = search_backend
-                    log("tool", sid, f"Overriding search backend → {search_backend}")
+                if call.tool_name == "web_search":
+                    if search_backend and search_backend != "auto":
+                        call.arguments["backend"] = search_backend
+                    if search_engine:
+                        call.arguments["search_engine"] = search_engine # Inject into kwargs
 
                 args_summary = ", ".join(f"{k}={str(v)[:40]}" for k, v in call.arguments.items())
                 log("tool", sid, f"Calling {call.tool_name}({args_summary})")
@@ -467,6 +488,7 @@ class AgentCore:
         historical_anchors: Optional[list[dict]] = None,
         force_memory:       bool = False,
         forced_tools:       Optional[list[str]] = None,
+        current_facts:      Optional[list[tuple[str, str, str]]] = None,
     ) -> list[dict]:
         parts = [system_prompt]
 
@@ -495,6 +517,15 @@ class AgentCore:
                 f"First message: \"{first_message}\"\n"
                 f"Total turns so far: {total_turns}\n"
                 f"--- End Anchor ---"
+            )
+
+        if current_facts:
+            fact_lines = [f"FACT: {s} {p} {o}".strip() for (s, p, o) in current_facts]
+            parts.append(
+                "--- Deterministic Facts ---\n"
+                "The following facts are currently true and override any prior memory:\n"
+                + "\n".join(fact_lines)
+                + "\n--- End Facts ---"
             )
 
         if historical_anchors:

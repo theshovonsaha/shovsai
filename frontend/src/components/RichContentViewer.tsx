@@ -93,7 +93,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                     src={renderData.path}
                     title={renderData.title}
                     style={{ width: '100%', height: '600px', border: 'none', background: '#000' }}
-                    sandbox="allow-scripts allow-popups"
+                    sandbox="allow-scripts allow-popups allow-same-origin"
                 />
             </div>
         );
