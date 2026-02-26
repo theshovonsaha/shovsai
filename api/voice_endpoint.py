@@ -28,7 +28,10 @@ Usage:
 
 import json
 import asyncio
-from typing import Optional
+import os
+import tempfile
+import re
+from typing import Optional, AsyncIterator
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from config.logger import log
@@ -57,87 +60,142 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
             await ws.send_json({"type": "config_ack", "status": "ok"})
             log("system", session_id or "voice", f"Voice config: agent={agent_id} model={model}")
 
-            # Phase 2: Audio loop
+            # Phase 2: Dual-Mode Loop (Streaming STT & TTS)
             while True:
-                audio_chunks: list[bytes] = []
+                user_text = ""
                 
-                # Collect audio until stt_end signal
-                while True:
-                    msg = await ws.receive()
+                # If Deepgram API key is present, we use Streaming STT
+                dg_key = os.getenv("DEEPGRAM_API_KEY")
+                if dg_key:
+                    try:
+                        from deepgram import DeepgramClient
+                        from deepgram.core.events import EventType
+                        
+                        deepgram = DeepgramClient(dg_key)
+                        dg_connection = deepgram.listen.live.v("1")
+                        
+                        transcript_queue = asyncio.Queue()
+
+                        async def on_message(self, message, **kwargs):
+                            # In v5, message is usually a ListenV1ResultsEvent
+                            try:
+                                if hasattr(message, 'channel') and message.channel.alternatives:
+                                    sentence = message.channel.alternatives[0].transcript
+                                    if sentence:
+                                        # Send interim results to client
+                                        await ws.send_json({
+                                            "type": "stt_result", 
+                                            "text": sentence, 
+                                            "is_final": message.is_final
+                                        })
+                                        if message.is_final:
+                                            await transcript_queue.put(sentence)
+                            except Exception as e:
+                                log("system", "voice", f"Error in on_message: {e}", level="error")
+
+                        dg_connection.on(EventType.MESSAGE, on_message)
+                        
+                        # In v5, options are passed as keyword arguments to connect
+                        async with dg_connection.connect(
+                            model="nova-3",
+                            language="en",
+                            smart_format=True,
+                            interim_results=True,
+                            endpointing=300, # Quick end-of-speech detection
+                        ) as live:
+                            # Bridge loop
+                            while True:
+                                # Wait for audio or stt_end signal
+                                try:
+                                    msg = await asyncio.wait_for(ws.receive(), timeout=0.05)
+                                    if msg["type"] == "websocket.disconnect":
+                                        raise WebSocketDisconnect()
+                                    
+                                    if "bytes" in msg and msg["bytes"]:
+                                        await live.send_media(msg["bytes"])
+                                    elif "text" in msg and msg["text"]:
+                                        cmd = json.loads(msg["text"])
+                                        if cmd.get("type") == "stt_end":
+                                            break
+                                except asyncio.TimeoutError:
+                                    # Check if we got a final transcript from DG endpointing
+                                    if not transcript_queue.empty():
+                                        user_text = await transcript_queue.get()
+                                        break
+                                    continue
+                            
+                            if hasattr(live, 'finalize'):
+                                await live.finalize()
+                    except Exception as e:
+                        log("system", "voice", f"Deepgram Live failed: {e}", level="warn")
+                
+                # Legacy Buffer Fallback (if Deepgram Live failed or no key)
+                if not user_text:
+                    audio_chunks = []
+                    while True:
+                        msg = await ws.receive()
+                        if msg["type"] == "websocket.disconnect": raise WebSocketDisconnect()
+                        if "bytes" in msg: audio_chunks.append(msg["bytes"])
+                        elif "text" in msg:
+                            if json.loads(msg["text"]).get("type") == "stt_end": break
                     
-                    if msg["type"] == "websocket.disconnect":
-                        raise WebSocketDisconnect(msg.get("code", 1000))
-
-                    if "bytes" in msg and msg["bytes"]:
-                        # Binary audio data
-                        audio_chunks.append(msg["bytes"])
-                    elif "text" in msg and msg["text"]:
-                        try:
-                            cmd = json.loads(msg["text"])
-                            if cmd.get("type") == "stt_end":
-                                break
-                            if cmd.get("type") == "disconnect":
-                                await ws.close()
-                                return
-                        except json.JSONDecodeError:
-                            pass
-
-                if not audio_chunks:
-                    await ws.send_json({"type": "error", "message": "No audio received"})
-                    continue
-
-                # STT: Convert audio → text
-                audio_data = b"".join(audio_chunks)
-                log("system", session_id or "voice", f"Received {len(audio_data)} bytes of audio")
-
-                try:
-                    user_text = await _transcribe_audio(audio_data)
-                except Exception as e:
-                    await ws.send_json({
-                        "type": "error",
-                        "message": f"STT failed: {e}. Install faster-whisper: pip install faster-whisper"
-                    })
-                    continue
+                    if not audio_chunks: continue
+                    user_text = await _transcribe_audio(b"".join(audio_chunks))
 
                 if not user_text or not user_text.strip():
                     await ws.send_json({"type": "stt_result", "text": ""})
                     continue
 
-                await ws.send_json({"type": "stt_result", "text": user_text})
-                log("system", session_id or "voice", f"STT result: {user_text[:80]}")
-
-                # Agent: Process through AgentCore
+                # Agent & TTS Stream
                 agent_instance = agent_manager.get_agent_instance(agent_id)
                 full_response = ""
+                sentence_buffer = ""
+                
+                # Injection: Add "Voice Mode" instruction to the prompt context if in shovs Mode
+                voice_optimized_prompt = (
+                    "You are SHOVS. Respond in a concise, conversational tone. "
+                    "BE EXTREMELY BRIEF (1-2 sentences). DO NOT use markdown, bolding, lists, or headers. "
+                    "Speak like a helpful human assistant. No hashtags, no stars."
+                )
+                
+                # FIX: Ensure we are NOT using an STT model for the LLM call
+                llm_model = model
+                if llm_model and "whisper" in llm_model.lower():
+                    # Fallback to a proper chat model if Whisper was accidentally passed
+                    if "groq" in llm_model.lower():
+                        llm_model = "groq:llama-3.3-70b-versatile"
+                    else:
+                        llm_model = "gemini-1.5-flash"
+                
+                await ws.send_json({"type": "tts_start"})
 
                 async for event in agent_instance.chat_stream(
-                    user_message=user_text,
+                    user_message=f"{voice_optimized_prompt}\n\nUser: {user_text}",
                     session_id=session_id,
                     agent_id=agent_id,
-                    model=model,
+                    model=llm_model,
                 ):
-                    if event["type"] == "session":
-                        session_id = event["session_id"]
-                    elif event["type"] == "token":
-                        full_response += event["content"]
-                        await ws.send_json({"type": "agent_token", "content": event["content"]})
-                    elif event["type"] == "error":
-                        await ws.send_json({"type": "error", "message": event["message"]})
+                    if event["type"] == "token":
+                        token = event["content"]
+                        full_response += token
+                        sentence_buffer += token
+                        await ws.send_json({"type": "agent_token", "content": token})
+                        
+                        if any(p in token for p in ".!?\n") and len(sentence_buffer.strip()) > 10:
+                            clean_sentence = _clean_text_for_speech(sentence_buffer)
+                            if clean_sentence.strip():
+                                async for audio_chunk in _synthesize_speech(clean_sentence):
+                                    await ws.send_bytes(audio_chunk)
+                            sentence_buffer = ""
+
+                if sentence_buffer.strip():
+                    clean_sentence = _clean_text_for_speech(sentence_buffer)
+                    if clean_sentence.strip():
+                        async for audio_chunk in _synthesize_speech(clean_sentence):
+                            await ws.send_bytes(audio_chunk)
 
                 await ws.send_json({"type": "agent_done", "full_response": full_response})
-
-                # TTS: Convert response → audio
-                if full_response.strip():
-                    try:
-                        await ws.send_json({"type": "tts_start"})
-                        async for audio_chunk in _synthesize_speech(full_response):
-                            await ws.send_bytes(audio_chunk)
-                        await ws.send_json({"type": "tts_end"})
-                    except Exception as e:
-                        await ws.send_json({
-                            "type": "error",
-                            "message": f"TTS failed: {e}. Install a TTS engine (see voice docs)"
-                        })
+                await ws.send_json({"type": "tts_end"})
 
         except WebSocketDisconnect:
             log("system", session_id or "voice", "Voice WebSocket disconnected")
@@ -156,6 +214,32 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
                     pass
 
 
+def _clean_text_for_speech(text: str) -> str:
+    """
+    Strips markdown and special characters that TTS shouldn't narrate.
+    """
+    # Remove code blocks
+    text = re.sub(r'```[\s\S]*?```', '', text)
+    # Remove inline code
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    # Remove bold/italics
+    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
+    text = re.sub(r'\*([^*]+)\*', r'\1', text)
+    text = re.sub(r'__([^_]+)__', r'\1', text)
+    text = re.sub(r'_([^_]+)_', r'\1', text)
+    # Remove headers
+    text = re.sub(r'^#+\s*', '', text, flags=re.MULTILINE)
+    # Remove list markers
+    text = re.sub(r'^\s*[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Remove links [text](url) -> text
+    text = re.sub(r'\[([^\]]+)\]\([^\)]+\)', r'\1', text)
+    # Remove hashtags and other visual markers
+    text = text.replace('#', '')
+    
+    return text.strip()
+
+
 # ── STT Engine ────────────────────────────────────────────────────────────────
 
 _whisper_model = None
@@ -170,11 +254,19 @@ async def _transcribe_audio(audio_bytes: bytes) -> str:
     Falls back to a stub message if faster-whisper is not installed,
     so the rest of the system can still be tested.
     """
-    # 1. Try Groq Cloud STT first (faster, no local model needed)
-    groq_api_key = os.getenv("GROQ_API_KEY")
-    if groq_api_key:
+    # 0. Try Deepgram Cloud STT first (ultra-fast, best for real-time)
+    dg_key = os.getenv("DEEPGRAM_API_KEY")
+    if dg_key:
         try:
-            return await _transcribe_audio_groq(audio_bytes, groq_api_key)
+            return await _transcribe_audio_deepgram(audio_bytes, dg_key)
+        except Exception as e:
+            log("system", "voice", f"Deepgram STT failed, falling back: {e}", level="warn")
+
+    # 1. Try Groq Cloud STT (very fast)
+    gr_key = os.getenv("GROQ_API_KEY")
+    if gr_key:
+        try:
+            return await _transcribe_audio_groq(audio_bytes, gr_key)
         except Exception as e:
             log("system", "voice", f"Groq STT failed, falling back to local: {e}", level="warn")
 
@@ -185,8 +277,6 @@ async def _transcribe_audio(audio_bytes: bytes) -> str:
         from faster_whisper import WhisperModel
         import numpy as np
         import io
-        import tempfile
-        import os
 
         # Lazy-load model (downloads on first use, ~1GB for 'base')
         if _whisper_model is None:
@@ -222,8 +312,6 @@ async def _transcribe_audio(audio_bytes: bytes) -> str:
 async def _transcribe_audio_groq(audio_bytes: bytes, api_key: str) -> str:
     """Transcribe using Groq Cloud API."""
     from groq import AsyncGroq
-    import tempfile
-    import os
 
     client = AsyncGroq(api_key=api_key)
     
@@ -245,27 +333,69 @@ async def _transcribe_audio_groq(audio_bytes: bytes, api_key: str) -> str:
             os.unlink(temp_path)
 
 
+async def _transcribe_audio_deepgram(audio_bytes: bytes, api_key: str) -> str:
+    """Transcribe using Deepgram Cloud API."""
+    from deepgram import DeepgramClient
+
+    try:
+        deepgram = DeepgramClient(api_key)
+        
+        # In v5, we can use listen.rest.v("1").transcribe_file
+        # payload usually expects a dict with buffer
+        payload = {
+            "buffer": audio_bytes,
+        }
+        options = {
+            "model": "nova-3",
+            "smart_format": True,
+            "language": "en",
+        }
+        response = deepgram.listen.rest.v("1").transcribe_file(payload, options)
+        
+        # Extract transcript
+        transcript = response.results.channels[0].alternatives[0].transcript
+        return transcript.strip()
+    except Exception as e:
+        log("system", "voice", f"Deepgram transcription error: {e}", level="error")
+        raise e
+
+
 # ── TTS Engine ────────────────────────────────────────────────────────────────
 
 async def _synthesize_speech(text: str):
     """
     Convert text to speech audio chunks.
-
-    Yields bytes of PCM audio (16kHz, 16-bit, mono).
-
-    Supports multiple backends, auto-detected:
-      1. Kokoro TTS (pip install kokoro) — fastest open source
-      2. Piper TTS (pip install piper-tts) — lightweight
-      3. Edge TTS (pip install edge-tts) — free Microsoft voices
-
-    Falls back to a "TTS not available" error if none installed.
+    Prioritizes Deepgram Aura for high-fidelity shovs voice.
     """
-    # Try Kokoro first
+    dg_key = os.getenv("DEEPGRAM_API_KEY")
+    if dg_key:
+        try:
+            from deepgram import DeepgramClient
+            deepgram = DeepgramClient(dg_key)
+            
+            # v5 style: use generate method which returns an iterator of bytes
+            # the generate method is on speak.v("1").audio
+            async for chunk in deepgram.speak.v("1").audio.generate(
+                text=text,
+                model="aura-orion-en",
+                encoding="linear16", # Common for streaming
+                sample_rate=16000
+            ):
+                if chunk:
+                    yield chunk
+            return
+        except Exception as e:
+            log("system", "voice", f"Deepgram TTS failed: {e}", level="warn")
+
+    # Fallback to local/free engines
+    # Try Kokoro first (fastest local)
     try:
         import kokoro
-        voice = kokoro.Voice("af_bella")  # Default voice
+        import numpy as np
+        # af_bella is feminine, maybe find a masc one for Jarvis if available
+        # af_sky or similar. For now af_bella is the standard example.
+        voice = kokoro.Voice("af_bella")
         audio = voice.speak(text)
-        # Yield in 4096-byte chunks
         chunk_size = 4096
         for i in range(0, len(audio), chunk_size):
             yield audio[i:i + chunk_size]
@@ -273,12 +403,11 @@ async def _synthesize_speech(text: str):
     except ImportError:
         pass
 
-    # Try edge-tts (free, no install weight)
+    # Try edge-tts (free, Microsoft voices)
     try:
         import edge_tts
-        import io
-
-        communicate = edge_tts.Communicate(text, "en-US-AriaNeural")
+        log("system", "voice", f"Using edge-tts fallback", level="debug")
+        communicate = edge_tts.Communicate(text, "en-US-GuyNeural") # Guy is close to Jarvis
         async for chunk in communicate.stream():
             if chunk["type"] == "audio":
                 yield chunk["data"]
@@ -286,10 +415,4 @@ async def _synthesize_speech(text: str):
     except ImportError:
         pass
 
-    # No TTS available — raise clear error
-    raise RuntimeError(
-        "No TTS engine installed. Install one of:\n"
-        "  pip install edge-tts      (easiest, free, uses Microsoft voices)\n"
-        "  pip install kokoro         (fast local)\n"
-        "  pip install piper-tts      (lightweight local)"
-    )
+    raise RuntimeError("No TTS engine available.")

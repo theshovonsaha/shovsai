@@ -9,7 +9,7 @@ python-dotenv
 groq
 pydantic
 chromadb
-google-generativeai
+google-genai
 openai
 # Voice pipeline
 faster-whisper

@@ -3,13 +3,13 @@ Google Gemini LLM Adapter
 -------------------------
 Integrates Google's Generative AI models (Gemini 1.5 Flash/Pro).
 
-Requires: pip install google-generativeai
+Requires: pip install google-genai
 Env vars: GEMINI_API_KEY
 """
 
 import asyncio
 import os
-from typing import AsyncIterator, Optional
+from typing import AsyncIterator, Optional, Any
 
 from llm.base_adapter import BaseLLMAdapter, LLMError
 
@@ -20,19 +20,18 @@ class GeminiAdapter(BaseLLMAdapter):
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY", "")
-        self._genai = None
+        self._client = None
 
-    def _get_genai(self):
-        if self._genai is None:
+    def _get_client(self):
+        if self._client is None:
             if not self.api_key:
                 raise LLMError("GEMINI_API_KEY not found in environment.")
             try:
-                import google.generativeai as genai
-                genai.configure(api_key=self.api_key)
-                self._genai = genai
+                from google import genai
+                self._client = genai.Client(api_key=self.api_key)
             except ImportError:
-                raise LLMError("google-generativeai not installed. Run: pip install google-generativeai")
-        return self._genai
+                raise LLMError("google-genai not installed. Run: pip install google-genai")
+        return self._client
 
     async def complete(
         self,
@@ -42,27 +41,21 @@ class GeminiAdapter(BaseLLMAdapter):
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
     ) -> str:
-        genai = self._get_genai()
-        gemini_model = genai.GenerativeModel(model)
+        client = self._get_client()
         
-        # Convert internal protocol to Gemini format
-        history, last_msg = self._convert_messages(messages)
-        
-        chat = gemini_model.start_chat(history=history)
+        contents = self._convert_messages(messages)
         
         last_err: Exception = RuntimeError("no attempts made")
         for i, delay in enumerate(RETRY_DELAYS):
             try:
-                # Gemini doesn't have a direct async 'send_message' in the simple chat interface
-                # for non-streaming in some SDK versions, but we'll use generate_content for simplicity
-                # if images are present or just use send_message.
                 response = await asyncio.to_thread(
-                    chat.send_message,
-                    last_msg,
-                    generation_config=genai.types.GenerationConfig(
-                        temperature=temperature,
-                        max_output_tokens=max_tokens
-                    )
+                    client.models.generate_content,
+                    model=model,
+                    contents=contents,
+                    config={
+                        'temperature': temperature,
+                        'max_output_tokens': max_tokens
+                    }
                 )
                 return response.text
             except Exception as e:
@@ -80,24 +73,21 @@ class GeminiAdapter(BaseLLMAdapter):
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
     ) -> AsyncIterator[str]:
-        genai = self._get_genai()
-        
-        # Note: Gemini 1.5 models are multimodal by default.
-        # If images are provided, we should probably handle them in generate_content
-        gemini_model = genai.GenerativeModel(model)
-        history, last_msg = self._convert_messages(messages)
-        chat = gemini_model.start_chat(history=history)
+        client = self._get_client()
+        contents = self._convert_messages(messages)
 
         try:
-            # We use to_thread because the current SDK's send_message is synchronous
+            # google-genai stream is also synchronous-iterative in many parts,
+            # but we can wrap the generation call in a thread if needed,
+            # or just iterate since it's a generator.
             response = await asyncio.to_thread(
-                chat.send_message,
-                last_msg,
-                stream=True,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_tokens
-                )
+                client.models.generate_content_stream,
+                model=model,
+                contents=contents,
+                config={
+                    'temperature': temperature,
+                    'max_output_tokens': max_tokens
+                }
             )
             for chunk in response:
                 if chunk.text:
@@ -107,9 +97,10 @@ class GeminiAdapter(BaseLLMAdapter):
 
     async def list_models(self) -> list[str]:
         try:
-            genai = self._get_genai()
-            models = await asyncio.to_thread(genai.list_models)
-            return [m.name.replace("models/", "") for m in models if "generateContent" in m.supported_generation_methods]
+            client = self._get_client()
+            models_resp = await asyncio.to_thread(client.models.list)
+            # The resp is an iterator/list of model objects
+            return [m.name for m in models_resp]
         except Exception:
             return ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-2.0-flash-exp"]
 
@@ -117,39 +108,28 @@ class GeminiAdapter(BaseLLMAdapter):
         if not self.api_key:
             return False
         try:
-            genai = self._get_genai()
-            # Simple list_models test or a small generation could work for health check
-            await asyncio.to_thread(genai.list_models)
+            client = self._get_client()
+            # Simple list metadata to check connection
+            await asyncio.to_thread(client.models.list, config={'page_size': 1})
             return True
         except Exception:
             return False
 
-    def _convert_messages(self, messages: list[dict]):
+    def _convert_messages(self, messages: list[dict]) -> list[Any]:
         """
-        Convert internal {role, content} to Gemini {role, parts} history.
-        Gemini roles: 'user', 'model'.
-        Returns (history, last_message_string).
+        Convert internal {role, content} to google-genai contents format.
+        Roles: 'user', 'model'.
         """
-        gemini_history = []
-        # Gemini history shouldn't include the 'system' instruction in the same way,
-        # but GenerativeModel supports system_instruction in constructor usually.
-        # For simplicity and compatibility with our loop, we fold system into user/model if needed,
-        # or just pass it as a user message if it's the first.
+        from google.genai import types
         
-        system_instruction = ""
-        msgs_to_process = messages.copy()
+        genai_contents = []
+        for msg in messages:
+            role = "user" if msg["role"] == "user" or msg["role"] == "system" else "model"
+            genai_contents.append(
+                types.Content(
+                    role=role,
+                    parts=[types.Part(text=msg["content"])]
+                )
+            )
         
-        if msgs_to_process and msgs_to_process[0]["role"] == "system":
-            system_instruction = msgs_to_process.pop(0)["content"]
-
-        for msg in msgs_to_process[:-1]:
-            role = "user" if msg["role"] == "user" else "model"
-            gemini_history.append({"role": role, "parts": [msg["content"]]})
-        
-        last_msg = msgs_to_process[-1]["content"]
-        if system_instruction:
-            # Prepend system instruction to the last message or first user message
-            # Better: many recent Gemini versions support system_instruction in GenerativeModel
-            pass
-
-        return gemini_history, last_msg
+        return genai_contents

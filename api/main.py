@@ -53,7 +53,7 @@ agent_manager   = AgentManager(
 )
 
 # ── App ───────────────────────────────────────────────────────────────────────
-app = FastAPI(title="Agent Platform", version="0.5.0")
+app = FastAPI(title="shovs", version="0.5.0")
 setup_log_routes(app)
 setup_voice_routes(app, agent_manager)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -68,7 +68,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 async def root():
-    return {"name": "Agent Platform", "version": "0.4.0", "docs": "/docs", "tools": len(tool_registry.list_tools())}
+    return {"name": "shovs", "version": "0.5.0", "docs": "/docs", "tools": len(tool_registry.list_tools())}
 
 @app.get("/health")
 async def health():
@@ -210,6 +210,48 @@ async def get_context(session_id: str):
     if not s: raise HTTPException(404, "Session not found")
     lines = [l for l in s.compressed_context.split("\n") if l.strip()]
     return {"session_id": session_id, "lines": len(lines), "context": lines, "raw": s.compressed_context}
+
+# ── Memory Management ──────────────────────────────────────────────────────────
+
+@app.get("/memory")
+async def list_memories(limit: int = 100):
+    """List all stored long-term memories from the semantic graph."""
+    from memory.semantic_graph import SemanticGraph
+    graph = SemanticGraph()
+    memories = graph.list_all(limit=limit)
+    total = graph.count()
+    return {"memories": memories, "total": total, "limit": limit}
+
+@app.post("/memory/search")
+async def search_memory(payload: dict):
+    """Semantic search through the memory graph."""
+    from memory.semantic_graph import SemanticGraph
+    query = payload.get("query", "")
+    top_k = payload.get("top_k", 5)
+    if not query:
+        raise HTTPException(400, "query is required")
+    graph = SemanticGraph()
+    results = await graph.traverse(query, top_k=top_k)
+    return {"query": query, "results": results}
+
+@app.delete("/memory/{memory_id}")
+async def delete_memory(memory_id: int):
+    """Delete a single memory entry by ID."""
+    from memory.semantic_graph import SemanticGraph
+    graph = SemanticGraph()
+    deleted = graph.delete_by_id(memory_id)
+    if not deleted:
+        raise HTTPException(404, f"Memory {memory_id} not found")
+    return {"deleted": memory_id}
+
+@app.delete("/memory")
+async def clear_all_memories():
+    """Wipe the entire memory graph. This is irreversible."""
+    from memory.semantic_graph import SemanticGraph
+    graph = SemanticGraph()
+    before = graph.count()
+    graph.clear()
+    return {"cleared": before, "message": f"Deleted {before} memories"}
 
 # ── Agent Management ──────────────────────────────────────────────────────────
 

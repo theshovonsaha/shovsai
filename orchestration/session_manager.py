@@ -25,7 +25,7 @@ from typing import Optional
 
 
 MAX_SESSIONS        = 200
-SLIDING_WINDOW_SIZE = 20   # FIX: was 6 (3 turns) — now 20 (10 turns)
+SLIDING_WINDOW_SIZE = 8   # optimized for modern cloud limits (4 turns)
 DB_PATH             = "sessions.db"
 
 

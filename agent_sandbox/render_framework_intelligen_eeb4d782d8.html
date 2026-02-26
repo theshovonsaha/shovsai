@@ -1,0 +1,154 @@
+
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Framework Intelligence Dashboard</title>
+            <style>
+                body { font-family: sans-serif; background: #000; color: #fff; margin: 0; }
+            </style>
+        </head>
+        <body>
+            <!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>shovs Intelligence Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --surface: #161616;
+            --primary: #00ff85;
+            --text: #e0e0e0;
+            --border: rgba(255, 255, 255, 0.1);
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid var(--primary);
+            padding-bottom: 12px;
+        }
+        .title {
+            font-size: 20px;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            color: var(--primary);
+            text-transform: uppercase;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+        }
+        .chart-container {
+            height: 300px;
+            position: relative;
+        }
+        .summary-text {
+            font-size: 14px;
+            line-height: 1.6;
+            opacity: 0.8;
+        }
+        ul {
+            padding-left: 20px;
+            margin: 0;
+        }
+        li {
+            font-size: 13px;
+            margin-bottom: 8px;
+            color: var(--primary);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="title">◈ SOTA Framework Intelligence</div>
+        <div style="font-family: 'JetBrains Mono'; font-size: 10px; opacity: 0.5;">DATE: 2026-02-25</div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="card" style="grid-column: span 2;">
+            <div style="margin-bottom: 15px; font-weight: 600; font-size: 14px;">THROUGHPUT COMPARISON (Tokens/Sec/GPU)</div>
+            <div class="chart-container">
+                <canvas id="benchmarkChart"></canvas>
+            </div>
+        </div>
+        <div class="card">
+            <div style="margin-bottom: 15px; font-weight: 600; font-size: 14px;">KEY INSIGHTS</div>
+            <ul id="highlights"></ul>
+        </div>
+    </div>
+
+    <div class="card">
+        <div style="margin-bottom: 10px; font-weight: 600; font-size: 14px;">EXECUTIVE SUMMARY</div>
+        <div id="summary" class="summary-text"></div>
+    </div>
+
+    <script>
+        async function init() {
+            try {
+                const response = await fetch('data.json');
+                const data = await response.json();
+                
+                document.getElementById('summary').innerText = data.summary;
+                const list = document.getElementById('highlights');
+                data.highlights.forEach(h => {
+                    const li = document.createElement('li');
+                    li.innerText = h;
+                    list.appendChild(li);
+                });
+
+                const ctx = document.getElementById('benchmarkChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: data.chart_data.map(d => d.framework),
+                        datasets: [{
+                            label: 'Tokens/Sec',
+                            data: data.chart_data.map(d => d.tps),
+                            backgroundColor: data.chart_data.map(d => d.color),
+                            borderRadius: 6
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: {
+                            y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#888' } },
+                            x: { grid: { display: false }, ticks: { color: '#888' } }
+                        }
+                    }
+                });
+            } catch (err) {
+                console.error("Failed to load dashboard data:", err);
+            }
+        }
+        init();
+    </script>
+</body>
+</html>
+
+        </body>
+        </html>
+        

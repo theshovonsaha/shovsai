@@ -138,6 +138,35 @@ class SemanticGraph:
         results.sort(key=lambda x: x["similarity"], reverse=True)
         return results[:top_k]
 
+    def list_all(self, limit: int = 100) -> list[dict]:
+        """Return all stored memories, newest first."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, subject, predicate, object, created_at FROM memories ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+        return [
+            {"id": r[0], "subject": r[1], "predicate": r[2], "object": r[3], "created_at": r[4]}
+            for r in rows
+        ]
+
+    def delete_by_id(self, memory_id: int) -> bool:
+        """Delete a single memory by its ID. Returns True if deleted."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def count(self) -> int:
+        """Return total number of stored memories."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM memories")
+            return cursor.fetchone()[0]
+
     def clear(self):
         """Wipe the graph."""
         with sqlite3.connect(self.db_path) as conn:

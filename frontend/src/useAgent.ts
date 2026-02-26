@@ -45,6 +45,19 @@ export function useAgent() {
     const [pendingFiles, setPendingFiles] = useState<Attachment[]>([]);
     const [forcedTools, setForcedTools] = useState<string[]>([]);
 
+    // Voice / Jarvis States
+    const [isListening, setIsListening] = useState(false);
+    const [speaking, setSpeaking] = useState(false);
+    const [lastUserText, setLastUserText] = useState('');
+    const [currentToken, setCurrentToken] = useState('');
+    const [lastAgentResponse, setLastAgentResponse] = useState('');
+    const [voiceStatus, setVoiceStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
+
+    const wsRef = useRef<WebSocket | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const ttsChunksRef = useRef<ArrayBuffer[]>([]);
+
     const isSendingRef = useRef(false);
     const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -241,11 +254,10 @@ export function useAgent() {
                                 break;
 
                             case 'tool_result':
-                                // FIX: backend sends tool_name + success, not tool + content
                                 addBlock({
                                     type: ev.success ? 'tool_result' : 'tool_error',
                                     tool: ev.tool_name,
-                                    content: ev.success ? 'completed' : 'failed',
+                                    content: ev.content || (ev.success ? 'completed' : 'failed'),
                                 });
                                 break;
 
@@ -304,6 +316,172 @@ export function useAgent() {
         }
     };
 
+    const startRecording = async () => {
+        if (!activeAgentId) return;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            const recorder = new MediaRecorder(stream);
+            mediaRecorderRef.current = recorder;
+
+            recorder.ondataavailable = (e) => {
+                if (e.data.size > 0 && wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(e.data);
+                }
+            };
+
+            recorder.onstop = () => {
+                if (wsRef.current?.readyState === WebSocket.OPEN) {
+                    wsRef.current.send(JSON.stringify({ type: 'stt_end' }));
+                }
+                stream.getTracks().forEach(track => track.stop());
+            };
+
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/api/ws/voice`;
+            const ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+            wsRef.current = ws;
+
+            ws.onopen = () => {
+                ws.send(JSON.stringify({
+                    type: 'config',
+                    session_id: currentSessionId,
+                    agent_id: activeAgentId,
+                    model: currentModel
+                }));
+            };
+
+            ws.onmessage = async (e) => {
+                if (typeof e.data === 'string') {
+                    const msg = JSON.parse(e.data);
+                    switch (msg.type) {
+                        case 'config_ack':
+                            recorder.start(250);
+                            setIsListening(true);
+                            setVoiceStatus('recording');
+                            setLastUserText('');
+                            break;
+                        case 'stt_result':
+                            if (msg.text) {
+                                setLastUserText(msg.text);
+
+                                if (msg.is_final) {
+                                    setVoiceStatus('processing');
+                                } else {
+                                    setVoiceStatus('recording');
+                                }
+
+                                // Barge-in: If we are speaking and user starts talking, stop!
+                                if (speaking) {
+                                    stopSpeaking();
+                                }
+
+                                if (msg.is_final) {
+                                    // Mirror to chat history only when final
+                                    setMessages(prev => [...prev, {
+                                        id: 'u-' + Date.now(),
+                                        role: 'user',
+                                        content: msg.text,
+                                        blocks: [{ id: 'b-' + Date.now(), type: 'text', content: msg.text }]
+                                    }]);
+                                    setLastAgentResponse('');
+                                    setCurrentToken('');
+                                }
+                            }
+                            break;
+                        case 'agent_token':
+                            setCurrentToken(prev => prev + msg.content);
+                            break;
+                        case 'agent_done':
+                            setLastAgentResponse(msg.full_response);
+                            setCurrentToken('');
+                            // Mirror agent response to chat history
+                            setMessages(prev => [...prev, {
+                                id: 'a-' + Date.now(),
+                                role: 'assistant',
+                                content: msg.full_response,
+                                blocks: [{ id: 'ba-' + Date.now(), type: 'text', content: msg.full_response }]
+                            }]);
+                            break;
+                        case 'tts_start':
+                            setSpeaking(true);
+                            setVoiceStatus('speaking');
+                            ttsChunksRef.current = [];
+                            break;
+                        case 'tts_end':
+                            setSpeaking(false);
+                            setVoiceStatus('idle');
+                            if (ttsChunksRef.current.length > 0) {
+                                playBufferedAudio();
+                            }
+                            if (wsRef.current) wsRef.current.close();
+                            break;
+                        case 'error':
+                            console.error('Voice Error:', msg.message);
+                            stopRecording();
+                            setSpeaking(false);
+                            setVoiceStatus('idle');
+                            break;
+                    }
+                } else {
+                    // Binary audio data (TTS)
+                    if (e.data instanceof ArrayBuffer) {
+                        ttsChunksRef.current.push(e.data);
+                    }
+                }
+            };
+
+            ws.onclose = () => {
+                setIsListening(false);
+                setVoiceStatus('idle');
+            };
+
+        } catch (err: any) {
+            console.error('Mic error:', err);
+        }
+    };
+
+    const stopRecording = () => {
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+            mediaRecorderRef.current.stop();
+        }
+        setIsListening(false);
+    };
+
+    const stopSpeaking = () => {
+        if (wsRef.current) wsRef.current.close();
+        setSpeaking(false);
+        setVoiceStatus('idle');
+    };
+
+    const playBufferedAudio = async () => {
+        if (ttsChunksRef.current.length === 0) return;
+
+        // Merge chunks
+        const totalLen = ttsChunksRef.current.reduce((acc, c) => acc + c.byteLength, 0);
+        const merged = new Uint8Array(totalLen);
+        let offset = 0;
+        for (const chunk of ttsChunksRef.current) {
+            merged.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+        }
+        ttsChunksRef.current = [];
+
+        if (!audioContextRef.current) {
+            audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        }
+        const ctx = audioContextRef.current;
+        try {
+            const buffer = await ctx.decodeAudioData(merged.buffer);
+            const source = ctx.createBufferSource();
+            source.buffer = buffer;
+            source.connect(ctx.destination);
+            source.start();
+        } catch (e) {
+            console.error('Failed to decode/play buffered audio:', e);
+        }
+    };
+
     return {
         health, models, tools, sessions, currentSessionId,
         activeAgentId, setActiveAgentId,
@@ -312,6 +490,9 @@ export function useAgent() {
         messages, contextLines,
         isStreaming, pendingFiles,
         forcedTools, setForcedTools,
+        isListening, speaking, voiceStatus,
+        lastUserText, currentToken, lastAgentResponse,
+        startRecording, stopRecording, stopSpeaking,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,
     };

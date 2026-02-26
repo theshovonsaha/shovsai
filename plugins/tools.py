@@ -137,14 +137,13 @@ async def _web_search(query: str, num_results: int = 8) -> str:
 
 
 def _format_search_results(query: str, results: list[dict]) -> str:
-    lines = [f"Search results for: {query}\n"]
-    for i, r in enumerate(results, 1):
-        lines.append(f"[{i}] {r['title']}")
-        lines.append(f"    URL: {r['url']}")
-        if r.get("snippet"):
-            lines.append(f"    {r['snippet'][:200]}")
-        lines.append("")
-    return "\n".join(lines)
+    # We return a structured JSON string so the frontend can render nice cards.
+    # We include a brief text prefix so the LLM knows what happened immediately.
+    return json.dumps({
+        "type": "web_search_results",
+        "query": query,
+        "results": results
+    })
 
 
 WEB_SEARCH_TOOL = Tool(
@@ -171,13 +170,15 @@ WEB_SEARCH_TOOL = Tool(
 #  WEB FETCH  —  full page text via httpx
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _web_fetch(url: str, max_chars: int = 8000) -> str:
-    """Fetch and return readable text from a URL (strips HTML tags)."""
+async def _web_fetch(url: str, max_chars: int = 12000) -> str:
+    """Fetch and return well-structured, readable text from a URL."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
             "Chrome/120 Safari/537.36"
         ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
     }
     try:
         async with httpx.AsyncClient(
@@ -190,23 +191,95 @@ async def _web_fetch(url: str, max_chars: int = 8000) -> str:
             content_type = resp.headers.get("content-type", "")
 
             if "json" in content_type:
-                return json.dumps(resp.json(), indent=2)[:max_chars]
+                return json.dumps({
+                    "type": "web_fetch_result",
+                    "url": url,
+                    "content": json.dumps(resp.json(), indent=2)[:max_chars],
+                    "truncated": False,
+                    "total_length": len(resp.text),
+                    "title": url,
+                })
 
             html = resp.text
 
-        # Strip scripts, styles, and tags
-        html = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<[^>]+>", " ", html)
-        text = re.sub(r"[ \t]+", " ", text)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = text.strip()
+            # — Smart structured extraction using html.parser —
+            from html.parser import HTMLParser
 
-        return text[:max_chars] + (f"\n\n[truncated — {len(text) - max_chars} more chars]" if len(text) > max_chars else "")
+            class SmartExtractor(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.chunks: list[str] = []
+                    self._skip = False
+                    self._tag_stack: list[str] = []
+                    self.page_title = ""
+                    self._in_title = False
+
+                def handle_starttag(self, tag, attrs):
+                    self._tag_stack.append(tag)
+                    if tag in ("script", "style", "nav", "footer", "aside", "noscript", "head"):
+                        self._skip = True
+                    if tag == "title":
+                        self._in_title = True
+                    # Add structural markers
+                    if tag in ("h1", "h2", "h3", "h4"):
+                        self.chunks.append(f"\n\n### ")
+                    elif tag == "p":
+                        self.chunks.append("\n\n")
+                    elif tag == "li":
+                        self.chunks.append("\n- ")
+                    elif tag == "br":
+                        self.chunks.append("\n")
+                    elif tag == "a":
+                        href = dict(attrs).get("href", "")
+                        if href and href.startswith("http"):
+                            self._current_href = href
+                        else:
+                            self._current_href = ""
+                    else:
+                        self._current_href = ""
+
+                def handle_endtag(self, tag):
+                    if self._tag_stack and self._tag_stack[-1] == tag:
+                        self._tag_stack.pop()
+                    if tag in ("script", "style", "nav", "footer", "aside", "noscript", "head"):
+                        self._skip = False
+                    if tag == "title":
+                        self._in_title = False
+
+                def handle_data(self, data):
+                    if self._in_title:
+                        self.page_title = data.strip()
+                        return
+                    if self._skip:
+                        return
+                    text = data.strip()
+                    if text:
+                        self.chunks.append(text)
+
+            extractor = SmartExtractor()
+            extractor.feed(html)
+
+            # Join and clean up
+            text = " ".join(extractor.chunks)
+            text = re.sub(r" {2,}", " ", text)
+            text = re.sub(r"\n{3,}", "\n\n", text)
+            text = text.strip()
+
+            title = extractor.page_title or url
+
+            return json.dumps({
+                "type": "web_fetch_result",
+                "url": url,
+                "title": title,
+                "content": text[:max_chars],
+                "truncated": len(text) > max_chars,
+                "total_length": len(text),
+            })
 
     except httpx.HTTPStatusError as e:
-        return f"HTTP {e.response.status_code} fetching {url}"
+        return json.dumps({"type": "web_fetch_result", "url": url, "error": f"HTTP {e.response.status_code}"})
     except Exception as e:
-        return f"web_fetch error: {e}"
+        return json.dumps({"type": "web_fetch_result", "url": url, "error": str(e)})
 
 
 WEB_FETCH_TOOL = Tool(
@@ -957,6 +1030,78 @@ QUERY_MEMORY_TOOL = Tool(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  HTML RENDERING  —  Isolated Sandboxed Viewer
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _generate_app(html_content: str, title: str = "Standalone App") -> str:
+    """
+    Saves HTML content to a unique file and injects a premium 'V8 Platinum' theme.
+    Returns metadata for the frontend to render an isolated iframe.
+    """
+    import hashlib
+    import time
+    
+    # Generate a unique hash-based filename
+    content_hash = hashlib.md5(f"{html_content}{time.time()}".encode()).hexdigest()[:10]
+    safe_title = re.sub(r'[^a-zA-Z0-9]', '_', title).lower()[:20]
+    filename = f"app_{safe_title}_{content_hash}.html"
+    file_path = SANDBOX_DIR / filename
+    
+    # Inject Premium V8 Platinum Theme if not already present
+    if "<!DOCTYPE html>" not in html_content:
+        html_content = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {{ --bg: #000; --text: #fff; --primary: #00ff85; }}
+        body {{ 
+            background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; min-height: 100vh;
+            -webkit-font-smoothing: antialiased;
+        }}
+        ::-webkit-scrollbar {{ width: 6px; }}
+        ::-webkit-scrollbar-thumb {{ background: #333; border-radius: 10px; }}
+        .v8-card {{ background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 12px; }}
+    </style>
+</head>
+<body class="p-6">
+    {html_content}
+    <script>lucide.createIcons();</script>
+</body>
+</html>"""
+    
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(html_content)
+        
+    return json.dumps({
+        "status": "success",
+        "type": "app_view",
+        "title": title,
+        "filename": filename,
+        "path": f"/sandbox/{filename}"
+    })
+
+GENERATE_APP_TOOL = Tool(
+    name="generate_app",
+    description="Generate a standalone, interactive HTML application or dashboard. Uses a premium 'V8 Platinum' theme with TailwindCSS and Lucide-React support. Returns an isolated view.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "html_content": {"type": "string", "description": "The HTML body or full code to render."},
+            "title": {"type": "string", "description": "The application title."}
+        },
+        "required": ["html_content"]
+    },
+    handler=_generate_app,
+    tags=["visual", "app"]
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Registration helper
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -969,10 +1114,10 @@ ALL_TOOLS = [
     FILE_VIEW_TOOL,
     FILE_STR_REPLACE_TOOL,
     WEATHER_TOOL,
-    PLACES_SEARCH_TOOL,
     PLACES_MAP_TOOL,
     STORE_MEMORY_TOOL,
     QUERY_MEMORY_TOOL,
+    GENERATE_APP_TOOL,
 ]
 
 def register_all_tools(registry: ToolRegistry) -> None:

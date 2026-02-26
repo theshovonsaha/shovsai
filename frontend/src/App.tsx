@@ -5,12 +5,61 @@ import { Dashboard } from './Dashboard';
 import { LogPanel } from './LogPanel';
 import { VoiceControl } from './components/VoiceControl';
 import { PremiumSelect } from './components/PremiumSelect';
+import { ShovsView } from './components/ShovsView';
+import { OptionsPanel } from './components/OptionsPanel';
+
+const ToolEvent = ({ type, tool, content }: { type: 'call' | 'result' | 'error'; tool: string; content?: string }) => {
+  const [expanded, setExpanded] = React.useState(false);
+
+  let label = type === 'call' ? 'Calling' : type === 'result' ? 'Returned' : 'Failed';
+  let summary = '';
+
+  if (content && type === 'result') {
+    try {
+      const data = JSON.parse(content);
+      if (data.type === 'web_search_results' && data.results) {
+        label = `Found ${data.results.length} results`;
+      } else if (data.type === 'web_fetch_result') {
+        label = data.error ? 'Fetch Failed' : `Fetched ${data.total_length || 0} chars`;
+      } else if (data.status === 'success' && (data.path || data.type === 'app_view')) {
+        label = `View ${data.title || 'App'}`;
+      }
+    } catch (e) {
+      // Fallback
+    }
+  } else if (content && type === 'call') {
+    summary = content.length > 50 ? content.substring(0, 50) + '...' : content;
+  }
+
+  const icon = type === 'call' ? '⚙' : type === 'result' ? '✓' : '✗';
+
+  return (
+    <div className={`tool-event ${type} ${expanded ? 'expanded' : ''}`}>
+      <div className="tool-header" onClick={() => setExpanded(!expanded)}>
+        <span className="tool-icon">{icon}</span>
+        <span className="tool-text">
+          <span className="tool-label">{label}</span>
+          <span className="tool-name">{tool}</span>
+          {summary && !expanded && <span className="tool-summary">· {summary}</span>}
+        </span>
+        <span className="tool-toggle">{expanded ? '▴' : '▾'}</span>
+      </div>
+      {expanded && content && (
+        <div className="tool-details">
+          <RichContentViewer content={content} />
+        </div>
+      )}
+    </div>
+  );
+};
 
 function App() {
   const agent = useAgent();
   const [inputText, setInputText] = useState('');
   const [logOpen, setLogOpen] = useState(false);
+  const [shovsMode, setShovsMode] = useState(false);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<'sessions' | 'options'>('sessions');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const toolBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -52,7 +101,7 @@ function App() {
       {/* Topbar */}
       <header className="topbar">
         <button className="home-btn" onClick={() => agent.setActiveAgentId(null)}>← agents</button>
-        <span className="logo-a">AGENT</span>
+        <span className="logo-a">SHOVS</span>
         <span className="logo-sep">//</span>
         <span className="logo-b">PLATFORM</span>
         <StatusDot />
@@ -65,6 +114,13 @@ function App() {
             {logOpen && <span className="dot-live" />}
             ⬡ logs
           </button>
+          <button
+            className={`jarvis-toggle-btn ${shovsMode ? 'active' : ''}`}
+            onClick={() => setShovsMode(o => !o)}
+            title="Toggle immersive shovs Voice Mode"
+          >
+            {shovsMode ? '◈ HUD' : '◈ SHOVS'}
+          </button>
           <span className="model-label">MODEL</span>
           <PremiumSelect
             value={agent.currentModel}
@@ -76,51 +132,74 @@ function App() {
 
       {/* Sidebar */}
       <aside className="sidebar">
-        <div className="sidebar-head">
-          <span className="sidebar-title">Sessions</span>
-          <button className="btn-new" onClick={agent.newSession}>+ new</button>
+        {/* Sidebar Tab Switcher */}
+        <div className="sidebar-tabs">
+          <button
+            className={`sidebar-tab ${sidebarTab === 'sessions' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('sessions')}
+          >Sessions</button>
+          <button
+            className={`sidebar-tab ${sidebarTab === 'options' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('options')}
+          >⚙ Options</button>
         </div>
-        <div className="session-list">
-          {agent.sessions.length === 0 ? (
-            <div style={{ padding: '12px 14px', fontSize: '10px', color: 'var(--text-dim)' }}>no sessions</div>
-          ) : agent.sessions.map(s => (
-            <div
-              key={s.id}
-              className={`s-item ${s.id === agent.currentSessionId ? 'active' : ''}`}
-              onClick={() => agent.loadSession(s.id)}
-            >
-              <div className="s-title">{s.title || 'New Chat'}</div>
-              <div className="s-meta">{s.message_count} msg · {(s.model || '').split(':')[0]}</div>
-              <button className="s-delete" onClick={e => { e.stopPropagation(); agent.deleteSession(s.id); }}>✕</button>
+
+        {sidebarTab === 'sessions' && (
+          <>
+            <div className="sidebar-head">
+              <span className="sidebar-title">Sessions</span>
+              <button className="btn-new" onClick={agent.newSession}>+ new</button>
             </div>
-          ))}
-        </div>
-        <div className="ctx-panel">
-          <div className="ctx-head">
-            <span className="ctx-label">Context Engine</span>
-            <span className={`ctx-state ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>
-              ● {agent.contextLines > 0 ? 'warm' : 'cold'}
-            </span>
-          </div>
-          <div className="ctx-bar-track">
-            <div className="ctx-bar-fill" style={{ width: `${Math.min(100, (agent.contextLines / 80) * 100)}%` }} />
-          </div>
-          <div className="ctx-detail">
-            {agent.contextLines === 0 ? 'no context loaded' : `${agent.contextLines} items`}
-          </div>
-          <div className="ctx-head" style={{ marginTop: '18px' }}>
-            <span className="ctx-label">Tools</span>
-            <span className="ctx-state warm">{agent.tools.length}</span>
-          </div>
-          <div className="ctx-detail">
-            {agent.tools.length === 0 ? 'none' : agent.tools.map((t, i) => (
-              <React.Fragment key={t.name}>
-                <span title={t.description} style={{ cursor: 'help' }}>{t.name}</span>
-                {i < agent.tools.length - 1 && ' · '}
-              </React.Fragment>
-            ))}
-          </div>
-        </div>
+            <div className="session-list">
+              {agent.sessions.length === 0 ? (
+                <div style={{ padding: '12px 14px', fontSize: '10px', color: 'var(--text-dim)' }}>no sessions</div>
+              ) : agent.sessions.map(s => (
+                <div
+                  key={s.id}
+                  className={`s-item ${s.id === agent.currentSessionId ? 'active' : ''}`}
+                  onClick={() => agent.loadSession(s.id)}
+                >
+                  <div className="s-title">{s.title || 'New Chat'}</div>
+                  <div className="s-meta">{s.message_count} msg · {(s.model || '').split(':')[0]}</div>
+                  <button className="s-delete" onClick={e => { e.stopPropagation(); agent.deleteSession(s.id); }}>✕</button>
+                </div>
+              ))}
+            </div>
+            <div className="ctx-panel">
+              <div className="ctx-head">
+                <span className="ctx-label">Context Engine</span>
+                <span className={`ctx-state ${agent.contextLines > 0 ? 'warm' : 'cold'}`}>
+                  ● {agent.contextLines > 0 ? 'warm' : 'cold'}
+                </span>
+              </div>
+              <div className="ctx-bar-track">
+                <div className="ctx-bar-fill" style={{ width: `${Math.min(100, (agent.contextLines / 80) * 100)}%` }} />
+              </div>
+              <div className="ctx-detail">
+                {agent.contextLines === 0 ? 'no context loaded' : `${agent.contextLines} items`}
+              </div>
+              <div className="ctx-head" style={{ marginTop: '18px' }}>
+                <span className="ctx-label">Tools</span>
+                <span className="ctx-state warm">{agent.tools.length}</span>
+              </div>
+              <div className="ctx-detail">
+                {agent.tools.length === 0 ? 'none' : agent.tools.map((t, i) => (
+                  <React.Fragment key={t.name}>
+                    <span title={t.description} style={{ cursor: 'help' }}>{t.name}</span>
+                    {i < agent.tools.length - 1 && ' · '}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        {sidebarTab === 'options' && (
+          <OptionsPanel
+            sessionId={agent.currentSessionId}
+            contextLines={agent.contextLines}
+          />
+        )}
       </aside>
 
       {/* Main chat */}
@@ -158,29 +237,11 @@ function App() {
                     case 'text':
                       return <RichContentViewer key={block.id} content={block.content} />;
                     case 'tool_call':
-                      return (
-                        <div key={block.id} className="tool-event call">
-                          <span className="tool-icon">⚙</span>
-                          <span className="tool-text">
-                            <span className="tool-name">{block.tool}</span>
-                            {block.content && <span className="tool-args"> · {block.content}</span>}
-                          </span>
-                        </div>
-                      );
+                      return <ToolEvent key={block.id} type="call" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'tool_result':
-                      return (
-                        <div key={block.id} className="tool-event result">
-                          <span className="tool-icon">✓</span>
-                          <span className="tool-text"><span className="tool-name">{block.tool}</span><span className="tool-args"> returned results</span></span>
-                        </div>
-                      );
+                      return <ToolEvent key={block.id} type="result" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'tool_error':
-                      return (
-                        <div key={block.id} className="tool-event error">
-                          <span className="tool-icon">✗</span>
-                          <span className="tool-text"><span className="tool-name">{block.tool}</span><span className="tool-args"> failed</span></span>
-                        </div>
-                      );
+                      return <ToolEvent key={block.id} type="error" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'attachment_badge':
                       return <div key={block.id} className={`attach-badge ${block.content.startsWith('✓') ? 'ok' : 'err'}`}>{block.content}</div>;
                     case 'compressing':
@@ -224,9 +285,13 @@ function App() {
           </div>
           <div className="input-row">
             <VoiceControl
-              sessionId={agent.currentSessionId}
-              agentId={agent.activeAgentId!}
-              model={agent.currentModel}
+              isRecording={agent.isListening}
+              status={agent.voiceStatus}
+              onToggle={() => {
+                if (agent.isListening) agent.stopRecording();
+                else if (agent.speaking) agent.stopSpeaking();
+                else agent.startRecording();
+              }}
             />
             <div className="input-wrap">
               <span className="input-prefix">›</span>
@@ -283,7 +348,31 @@ function App() {
         isOpen={logOpen}
         onClose={() => setLogOpen(false)}
       />
-    </div>
+
+      {/* shovs Overlay */}
+      {
+        shovsMode && (
+          <ShovsView
+            onClose={() => setShovsMode(false)}
+            isListening={agent.isListening}
+            isThinking={agent.isStreaming && !agent.speaking}
+            isSpeaking={agent.speaking}
+            lastUserText={agent.lastUserText}
+            currentAgentToken={agent.currentToken}
+            lastAgentResponse={agent.lastAgentResponse}
+            onToggleMic={() => {
+              if (agent.isListening) {
+                agent.stopRecording();
+              } else if (agent.speaking) {
+                agent.stopSpeaking();
+              } else {
+                agent.startRecording();
+              }
+            }}
+          />
+        )
+      }
+    </div >
   );
 }
 

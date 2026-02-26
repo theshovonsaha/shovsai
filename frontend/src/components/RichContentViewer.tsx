@@ -23,6 +23,82 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         // Fix trailing % in math blocks that confuses KaTeX parser
         .replace(/%(\s*\$)/g, '$1');
 
+    // Check if the content is a JSON result from tools
+    let renderData: any = null;
+    try {
+        const trimmed = sanitizedContent.trim();
+        // Look for the first { and last } to extract JSON even if there are prefixes/suffixes
+        const start = trimmed.indexOf('{');
+        const end = trimmed.lastIndexOf('}');
+        if (start !== -1 && end !== -1 && end > start) {
+            const potentialJson = trimmed.substring(start, end + 1);
+            renderData = JSON.parse(potentialJson);
+        }
+    } catch (e) {
+        // Fallback to normal markdown
+    }
+
+    if (renderData && renderData.type === 'web_search_results') {
+        return (
+            <div className="search-results-viewer" style={{ margin: '1em 0', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                    Results for: <span style={{ color: 'var(--primary)' }}>{renderData.query}</span>
+                </div>
+                {renderData.results.map((r: any, i: number) => (
+                    <div key={i} className="search-card" style={{ background: 'var(--surface2, #1e1e1e)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                        <a href={r.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none', fontSize: '14px', display: 'block', marginBottom: '4px' }}>
+                            {r.title}
+                        </a>
+                        <div style={{ fontSize: '11px', color: 'var(--accent, #00ff85)', opacity: 0.7, marginBottom: '6px', wordBreak: 'break-all' }}>{r.url}</div>
+                        <div style={{ fontSize: '13px', lineHeight: '1.4', opacity: 0.9 }}>{r.snippet}</div>
+                    </div>
+                ))}
+            </div>
+        );
+    }
+
+    if (renderData && renderData.type === 'web_fetch_result') {
+        return (
+            <div className="fetch-result-viewer" style={{ margin: '1em 0', borderRadius: '8px', overflow: 'hidden', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)' }}>
+                <div style={{ padding: '10px 16px', background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '12px', fontWeight: 600 }}>📄 Page Content</span>
+                    <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>{renderData.url}</span>
+                </div>
+                {renderData.error ? (
+                    <div style={{ padding: '20px', color: 'var(--error)', fontSize: '13px' }}>Error: {renderData.error}</div>
+                ) : (
+                    <div style={{ padding: '16px', fontSize: '13px', lineHeight: '1.6', maxHeight: '400px', overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
+                        {renderData.content}
+                        {renderData.truncated && (
+                            <div style={{ marginTop: '12px', padding: '8px', background: 'rgba(255,184,0,0.1)', color: 'var(--warn)', borderRadius: '4px', fontSize: '11px' }}>
+                                Content truncated ({renderData.total_length} chars total)
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    if (renderData && (renderData.path || renderData.type === 'app_view')) {
+        return (
+            <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px' }}>◈</span> {renderData.title || 'V8 PLATINUM APP'}
+                    </span>
+                    <a href={renderData.path} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN FULLSCREEN ↗</a>
+                </div>
+                <iframe
+                    src={renderData.path}
+                    title={renderData.title}
+                    style={{ width: '100%', height: '600px', border: 'none', background: '#000' }}
+                    sandbox="allow-scripts allow-popups"
+                />
+            </div>
+        );
+    }
+
     return (
         <div className="rich-content-viewer">
             <ReactMarkdown

@@ -1,4 +1,4 @@
-# Agent Platform v0.6.0 (V8 Engine)
+# shovs (V6 Engine)
 
 A high-performance, local-first, hybrid-cloud AI Agent Orchestrator designed for speed, flexibility, and deep semantic memory.
 

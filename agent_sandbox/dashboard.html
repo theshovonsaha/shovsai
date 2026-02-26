@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Training Framework Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=Roboto+Mono:wght@400;700&display=swap');
+
+        :root {
+            --bg-color: #0d1117;
+            --text-color: #e6edf3;
+            --primary-neon: #00f0ff;
+            /* Cyan */
+            --secondary-neon: #ff00ff;
+            /* Magenta */
+            --accent-color: #23272f;
+            --border-color: #30363d;
+            --chart-grid-color: rgba(0, 240, 255, 0.1);
+            --chart-label-color: #e6edf3;
+            --chart-tooltip-bg: rgba(0, 0, 0, 0.8);
+            --chart-tooltip-text: #00f0ff;
+        }
+
+        body {
+            font-family: 'Roboto Mono', monospace;
+            /* Techy, monospace font */
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 1200px;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        @media (min-width: 992px) {
+            .container {
+                grid-template-columns: 2fr 1fr;
+            }
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            /* Futuristic heading font */
+            color: var(--primary-neon);
+            text-shadow: 0 0 10px var(--primary-neon), 0 0 20px var(--primary-neon);
+            margin-bottom: 30px;
+            text-align: center;
+            font-size: 2.5em;
+        }
+
+        .card {
+            background-color: var(--accent-color);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 25px;
+            box-shadow: 0 0 15px rgba(0, 240, 255, 0.2);
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease-in-out;
+        }
+
+        .card:hover {
+            box-shadow: 0 0 25px var(--primary-neon), 0 0 40px rgba(255, 0, 255, 0.1);
+            transform: translateY(-5px);
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: -2px;
+            left: -2px;
+            right: -2px;
+            bottom: -2px;
+            background: linear-gradient(45deg, var(--primary-neon), var(--secondary-neon));
+            z-index: -1;
+            filter: blur(8px);
+            opacity: 0.3;
+            transition: opacity 0.3s ease-in-out;
+        }
+
+        .card:hover::before {
+            opacity: 0.6;
+        }
+
+        .card h2 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--secondary-neon);
+            text-shadow: 0 0 8px var(--secondary-neon);
+            margin-top: 0;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+            margin-bottom: 20px;
+            font-size: 1.8em;
+        }
+
+        #summary-content p {
+            line-height: 1.8;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+            color: var(--text-color);
+        }
+
+        #chart-container {
+            position: relative;
+            height: 400px;
+            /* Fixed height for the chart */
+        }
+
+        canvas {
+            background-color: var(--accent-color);
+            border-radius: 5px;
+        }
+
+        /* Chart.js overrides for Cyberpunk aesthetic */
+        .chartjs-tooltip {
+            background: var(--chart-tooltip-bg) !important;
+            border: 1px solid var(--primary-neon) !important;
+            color: var(--chart-tooltip-text) !important;
+            font-family: 'Roboto Mono', monospace !important;
+        }
+
+        .chartjs-tooltip-header-item,
+        .chartjs-tooltip-body-item {
+            color: var(--chart-tooltip-text) !important;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            h1 {
+                font-size: 2em;
+            }
+
+            .card {
+                padding: 20px;
+            }
+
+            .card h2 {
+                font-size: 1.5em;
+            }
+
+            #chart-container {
+                height: 300px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+
+            h1 {
+                font-size: 1.8em;
+            }
+
+            .card {
+                padding: 15px;
+            }
+
+            .card h2 {
+                font-size: 1.3em;
+            }
+
+            #summary-content p {
+                font-size: 0.9em;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <h1>LLM Training Efficiency Dashboard // 2025/2026 SOTA</h1>
+
+    <div class="container">
+        <div class="card" id="summary-card">
+            <h2>Market Intelligence Summary</h2>
+            <div id="summary-content">
+                <!-- Summary will be loaded here -->
+            </div>
+        </div>
+
+        <div class="card" id="chart-card">
+            <h2>Tokens/Sec/GPU Benchmark</h2>
+            <div id="chart-container">
+                <canvas id="efficiencyChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function loadDashboardData() {
+            try {
+                const response = await fetch('data.json');
+                const data = await response.json();
+
+                // Populate summary
+                document.getElementById('summary-content').innerHTML = `<p>${data.summary.replace(/\n/g, '</p><p>')}</p>`;
+
+                // Prepare chart data
+                const ctx = document.getElementById('efficiencyChart').getContext('2d');
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: data.chart_data.map(d => d.framework),
+                        datasets: [{
+                            label: 'Tokens/Sec/GPU',
+                            data: data.chart_data.map(d => d.tokens_per_sec || d.tps || 0),
+                            backgroundColor: data.chart_data.map((d, i) => d.color || [
+                                'rgba(0, 240, 255, 0.8)', // Cyan
+                                'rgba(255, 0, 255, 0.8)', // Magenta
+                                'rgba(0, 255, 127, 0.8)', // Green
+                                'rgba(255, 165, 0, 0.8)'  // Orange
+                            ][i % 4]),
+                            borderColor: data.chart_data.map((d, i) => d.color || [
+                                'rgba(0, 240, 255, 1)',
+                                'rgba(255, 0, 255, 1)',
+                                'rgba(0, 255, 127, 1)',
+                                'rgba(255, 165, 0, 1)'
+                            ][i % 4]),
+                            borderWidth: 1,
+                            borderRadius: 5
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: {
+                                display: true,
+                                labels: {
+                                    color: 'var(--chart-label-color)',
+                                    font: { family: 'Roboto Mono' }
+                                }
+                            },
+                            tooltip: {
+                                backgroundColor: 'var(--chart-tooltip-bg)',
+                                titleColor: 'var(--chart-tooltip-text)',
+                                bodyColor: 'var(--chart-tooltip-text)',
+                                borderColor: 'var(--primary-neon)',
+                                borderWidth: 1,
+                                titleFont: { family: 'Roboto Mono', weight: 'bold' },
+                                bodyFont: { family: 'Roboto Mono' }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: { color: 'var(--chart-grid-color)' },
+                                ticks: {
+                                    color: 'var(--chart-label-color)',
+                                    font: { family: 'Roboto Mono' }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'LLM Framework',
+                                    color: 'var(--primary-neon)',
+                                    font: { family: 'Orbitron', size: 14 }
+                                }
+                            },
+                            y: {
+                                beginAtZero: true,
+                                grid: { color: 'var(--chart-grid-color)' },
+                                ticks: {
+                                    color: 'var(--chart-label-color)',
+                                    font: { family: 'Roboto Mono' }
+                                },
+                                title: {
+                                    display: true,
+                                    text: 'Tokens/Sec/GPU',
+                                    color: 'var(--secondary-neon)',
+                                    font: { family: 'Orbitron', size: 14 }
+                                }
+                            }
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('Error loading dashboard data:', error);
+                document.getElementById('summary-content').innerHTML = '<p style="color: red;">Failed to load data. Please check data.json.</p>';
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', loadDashboardData);
+    </script>
+</body>
+
+</html>

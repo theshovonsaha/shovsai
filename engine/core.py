@@ -119,25 +119,17 @@ class AgentCore:
 
         async with session.lock:
             # ── Dynamic Adapter Selection ─────────────────────────────────────
-            # If the requested model suggests a different provider than current adapter
-            current_use_adapter = self.adapter
+            # Smart switching logic with resolution priority:
+            # 1. Explicit model request
+            # 2. Session model
+            # 3. Agent default model
+            # 4. System default (llama3.2)
             
-            # Smart switching logic:
-            if model:
-                # 1. Explicit prefix takes priority
-                if ":" in model:
-                    current_use_adapter = create_adapter(provider=model)
-                # 2. Known model patterns for cloud providers
-                elif any(p in model.lower() for p in ["gpt-", "llama-3.3", "mixtral", "groq/", "gemini-"]):
-                    provider = "openai"
-                    if "groq/" in model or "llama-3.3" in model or "mixtral" in model:
-                        provider = "groq"
-                    elif "gemini-" in model:
-                        provider = "gemini"
-                    current_use_adapter = create_adapter(provider=provider)
+            resolved_model = model or session.model or self.def_model or "llama3.2"
+            current_use_adapter = create_adapter(provider=resolved_model)
             
             # Use clean model name for API calls
-            clean_model = strip_provider_prefix(model)
+            clean_model = strip_provider_prefix(resolved_model)
             
             # ── Vector RAG ────────────────────────────────────────────────────
             ve = VectorEngine(sid, agent_id=session.agent_id, model=self.embed_model)
@@ -220,13 +212,16 @@ class AgentCore:
 
         yield _ev("compressing")
         try:
-            log("ctx", sid, f"Compressing exchange with {model}...")
+            # Decouple: Background compression ALWAYS uses a local model (llama3.2)
+            # unless specifically overridden. This saves cloud tokens/rate limits.
+            compression_target = "llama3.2"
+            log("ctx", sid, f"Compressing exchange with {compression_target}...")
             updated_ctx, keyed_facts = await self.ctx_eng.compress_exchange(
                 user_message=user_message,
-                assistant_response=clean_response,  # Use cleaned response, not raw
+                assistant_response=clean_response,
                 current_context=session.compressed_context,
                 is_first_exchange=is_first_exchange,
-                model=model,
+                model=compression_target, 
             )
             self.sessions.update_context(sid, updated_ctx)
             lines = len([l for l in updated_ctx.split("\n") if l.strip()])
@@ -367,6 +362,15 @@ class AgentCore:
 
             log("llm", sid, f"Streaming turn {tool_turn} · model={model}")
 
+            # Trace the full prompt for debugging (raw context the LLM sees)
+            _trace(agent_id or "default", sid, "llm_prompt", {
+                "turn": tool_turn,
+                "model": model,
+                "message_count": len(messages),
+                "estimated_tokens": sum(len(m.get("content", "")) for m in messages) // 4,
+                "messages": messages,  # Full raw context
+            })
+
             async for token in current_adapter.stream(model=model, messages=messages, images=turn_images):
                 turn_buffer += token
                 yield _ev("token", content=token)
@@ -430,7 +434,7 @@ class AgentCore:
                         "Stop attempting it. Answer with what you know and explain the limitation.]"
                     )
 
-                yield _ev("tool_result", tool_name=call.tool_name, success=result.success)
+                yield _ev("tool_result", tool_name=call.tool_name, success=result.success, content=result.content)
                 
                 # Assemble the XML result block for this specific tool call
                 combined_results.append(
@@ -499,6 +503,9 @@ class AgentCore:
                 key  = a.get("key", "Context")
                 fact = a.get("metadata", {}).get("fact", "")
                 ctx  = a.get("anchor", "")
+                # TRUNCATE anchors to prevent massive code-block leakage into every prompt
+                if len(ctx) > 800:
+                    ctx = f"{ctx[:500]}\n[...truncated...]\n{ctx[-300:]}"
                 anchor_parts.append(f"CONCEPT: {key}\nFACT: {fact}\nEXCHANGE:\n{ctx}")
             parts.append(
                 "--- Historical Context ---\n"
@@ -515,8 +522,16 @@ class AgentCore:
             parts.append(tools_block)
 
         messages = [{"role": "system", "content": "\n\n".join(parts)}]
+        
+        # SLIDING WINDOW with size-limit guard
+        max_chars_per_window_msg = 4000
         for m in sliding_window:
             if m["role"] in ("user", "assistant"):
-                messages.append(m)
+                content = m["content"]
+                if len(content) > max_chars_per_window_msg:
+                    # Truncate mid-conversation blocks (e.g. huge code dumps) to keep prompt manageable
+                    half = max_chars_per_window_msg // 2
+                    content = f"{content[:half]}\n\n[...large block truncated...]\n\n{content[-half:]}"
+                messages.append({"role": m["role"], "content": content})
         messages.append({"role": "user", "content": user_message})
         return messages

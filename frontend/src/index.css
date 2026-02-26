@@ -185,6 +185,37 @@ select:focus {
   overflow: hidden;
 }
 
+/* Sidebar Tab Switcher */
+.sidebar-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sidebar-tab {
+  flex: 1;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 10px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  transition: all 0.15s;
+  text-transform: uppercase;
+}
+
+.sidebar-tab:hover {
+  color: var(--text);
+}
+
+.sidebar-tab.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
 .sidebar-head {
   padding: 12px 14px 10px;
   border-bottom: 1px solid var(--border);
@@ -525,33 +556,221 @@ select:focus {
 
 /* ── Tool events (inside msg-body) ── */
 .tool-event {
-  margin: 4px 0;
-  padding: 6px 10px;
+  margin: 8px 0;
   border: 1px solid var(--border);
-  border-radius: 2px;
-  font-size: 11px;
+  border-radius: 6px;
+  font-size: 12px;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  overflow: hidden;
+  transition: all 0.2s ease;
+  animation: fadeUp .2s ease forwards;
+}
+
+.tool-header {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tool-header:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.tool-icon {
+  font-size: 14px;
+  margin-right: 10px;
+  opacity: 0.8;
+}
+
+.tool-text {
+  flex: 1;
+  display: flex;
   gap: 8px;
-  animation: fadeUp .15s ease forwards;
+}
+
+.tool-label {
+  opacity: 0.6;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.tool-name {
+  font-weight: 600;
+  font-family: var(--mono);
+}
+
+.tool-toggle {
+  opacity: 0.4;
+  font-size: 10px;
+  margin-left: 8px;
+}
+
+/* V8 PLATINUM TOOL EVENTS */
+.tool-event-v8 {
+  margin: 10px 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--surface2, #1e1e1e);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.tool-event-v8:hover {
+  border-color: var(--primary);
+  box-shadow: 0 6px 16px rgba(0, 255, 133, 0.1);
+}
+
+.tool-event-v8.app-call {
+  border: 1px solid var(--primary);
+  background: linear-gradient(145deg, #0a0a0a, #111);
+}
+
+.tool-action-button {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.tool-action-content {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.tool-icon-v8 {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 16px;
+  color: var(--primary);
+}
+
+.tool-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-label-v8 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+.tool-name-v8 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.tool-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.tool-summary-v8 {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-family: 'Roboto Mono', monospace;
+  max-width: 200px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tool-chevron {
+  font-size: 10px;
+  opacity: 0.4;
+}
+
+.tool-details-v8 {
+  padding: 16px;
+  background: #000;
+  border-top: 1px solid var(--border);
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 600px) {
+  .tool-summary-v8 {
+    display: none;
+  }
+
+  .tool-action-button {
+    padding: 10px 14px;
+  }
+}
+
+.tool-details {
+  border-top: 1px solid var(--border);
+  background: #000;
+  padding: 12px;
+  font-size: 12px;
 }
 
 .tool-event.call {
-  border-color: #2a2a00;
-  background: #0f0e00;
+  border-color: rgba(255, 184, 0, 0.2);
   color: var(--warn);
 }
 
 .tool-event.result {
-  border-color: #002a15;
-  background: #00120a;
+  border-color: rgba(0, 255, 133, 0.15);
   color: var(--accent);
 }
 
 .tool-event.error {
-  border-color: #2a0000;
-  background: #0f0000;
+  border-color: rgba(255, 68, 68, 0.2);
   color: var(--error);
+}
+
+/* ── Tool Result Premium Styling ── */
+.search-card {
+  transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+.search-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--primary) !important;
+}
+
+.fetch-result-viewer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.fetch-result-viewer::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
+.fetch-result-viewer::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
 }
 
 .tool-icon {
@@ -2046,4 +2265,105 @@ textarea::placeholder {
 
 .force-mem-btn:hover {
   border-color: var(--text-dim);
+}
+
+/* ── Jarvis Mode Toggle ── */
+.jarvis-toggle-btn {
+  background: rgba(139, 92, 246, 0.1) !important;
+  border: 1px solid rgba(139, 92, 246, 0.3) !important;
+  color: #a78bfa !important;
+  font-weight: 600 !important;
+  letter-spacing: 1px;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.jarvis-toggle-btn.active {
+  background: #7c3aed !important;
+  color: white !important;
+  border-color: #8b5cf6 !important;
+  box-shadow: 0 0 20px rgba(124, 58, 237, 0.4);
+}
+
+.jarvis-toggle-btn:hover {
+  background: rgba(139, 92, 246, 0.2) !important;
+  border-color: rgba(139, 92, 246, 0.5) !important;
+}
+
+/* ── Mobile Responsiveness ── */
+@media (max-width: 768px) {
+  .shovs-container {
+    padding: 10px;
+  }
+
+  .input-area {
+    padding: 8px;
+    margin-bottom: 5px;
+  }
+
+  .input-prefix {
+    display: none;
+  }
+
+  .msg {
+    max-width: 95%;
+  }
+
+  .tool-text {
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .tool-label {
+    font-size: 8px;
+  }
+
+  .html-render-sandbox iframe {
+    height: 350px !important;
+  }
+}
+/* ══════════════════════════════════════════════════════════════════
+   CSS ISOLATION — Prevent bidirectional style leakage
+   Sandboxed iframes and code previews must not bleed into the host.
+   ══════════════════════════════════════════════════════════════════ */
+
+.html-render-sandbox,
+.fetch-result-viewer {
+  isolation: isolate;
+  contain: layout style;
+}
+
+/* Code blocks inside rich content areas must not affect global styles */
+.rich-content-viewer pre,
+.rich-content-viewer code,
+.tool-details pre,
+.tool-details code,
+.tool-details-v8 pre,
+.tool-details-v8 code {
+  all: unset;
+  display: block;
+  background: #0d0d0d !important;
+  border-radius: 6px;
+  padding: 12px 16px;
+  font-family: 'Roboto Mono', 'Fira Code', monospace !important;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  color: #e1e1e1;
+  white-space: pre;
+  margin: 8px 0;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+
+.rich-content-viewer p code,
+.tool-details p code {
+  display: inline;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  background: rgba(255,255,255,0.08) !important;
 }

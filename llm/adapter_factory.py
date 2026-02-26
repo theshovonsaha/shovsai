@@ -15,34 +15,53 @@ Override with: LLM_PROVIDER=ollama|openai|groq|gemini
 import os
 from llm.base_adapter import BaseLLMAdapter
 
+# ── Global Adapter Cache ──────────────────────────────────────────────────
+_ADAPTER_CACHE: dict[str, BaseLLMAdapter] = {}
 
 def create_adapter(provider: str = None) -> BaseLLMAdapter:
     """
-    Create and return the appropriate LLM adapter.
+    Create (or return cached) LLM adapter based on provider string.
     """
-    if provider and ":" in provider:
-        p_part = provider.split(":")[0].lower()
-        if p_part in ["ollama", "openai", "groq", "gemini"]:
-            provider = p_part
+    # 1. Resolve provider identifier
+    target_provider = "auto"
+    if provider:
+        if ":" in provider:
+            p_part = provider.split(":")[0].lower()
+            if p_part in ["ollama", "openai", "groq", "gemini"]:
+                target_provider = p_part
+        else:
+            target_provider = provider.lower()
+    else:
+        target_provider = os.getenv("LLM_PROVIDER", "auto")
 
-    # Ensure provider is a string and not None for further comparisons
-    provider_str: str = provider or os.getenv("LLM_PROVIDER", "auto")
+    # 2. Determine actual provider class to use
+    final_provider = target_provider
+    if target_provider == "auto":
+        if os.getenv("OPENAI_API_KEY"): final_provider = "openai"
+        elif os.getenv("GROQ_API_KEY"): final_provider = "groq"
+        elif os.getenv("GEMINI_API_KEY"): final_provider = "gemini"
+        else: final_provider = "ollama"
 
-    if provider_str == "openai" or (provider_str == "auto" and os.getenv("OPENAI_API_KEY")):
+    # 3. Cache lookup
+    if final_provider in _ADAPTER_CACHE:
+        return _ADAPTER_CACHE[final_provider]
+
+    # 4. Instantiate and cache
+    if final_provider == "openai":
         from llm.openai_adapter import OpenAIAdapter
-        return OpenAIAdapter()
-
-    if provider_str == "groq" or (provider_str == "auto" and os.getenv("GROQ_API_KEY")):
+        adapter = OpenAIAdapter()
+    elif final_provider == "groq":
         from llm.groq_adapter import GroqLLMAdapter
-        return GroqLLMAdapter()
-
-    if provider_str == "gemini" or (provider_str == "auto" and os.getenv("GEMINI_API_KEY")):
+        adapter = GroqLLMAdapter()
+    elif final_provider == "gemini":
         from llm.gemini_adapter import GeminiAdapter
-        return GeminiAdapter()
+        adapter = GeminiAdapter()
+    else:
+        from llm.llm_adapter import OllamaAdapter
+        adapter = OllamaAdapter()
 
-    # Default: Ollama (local, no key required)
-    from llm.llm_adapter import OllamaAdapter
-    return OllamaAdapter()
+    _ADAPTER_CACHE[final_provider] = adapter
+    return adapter
 
 
 def strip_provider_prefix(model_name: str) -> str:
