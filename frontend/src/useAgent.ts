@@ -16,7 +16,7 @@ export interface Attachment {
 }
 
 export interface MessageBlock {
-    type: 'text' | 'tool_call' | 'tool_result' | 'tool_error' | 'attachment_badge' | 'compressing';
+    type: 'text' | 'thought' | 'tool_call' | 'tool_result' | 'tool_error' | 'attachment_badge' | 'compressing';
     content: string;
     tool?: string;
     id: string;
@@ -32,14 +32,14 @@ export interface Message {
 
 export function useAgent() {
     const [health, setHealth] = useState<{ status: string; ollama: boolean }>({ status: 'connecting...', ollama: false });
-    const [models, setModels] = useState<string[]>(['llama3.2']);
+    const [models, setModels] = useState<Record<string, string[]>>({ ollama: ['llama3.2'] });
     const [tools, setTools] = useState<any[]>([]);
     const [sessions, setSessions] = useState<Session[]>([]);
     const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
     const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
-    const [currentModel, setCurrentModel] = useState<string>('llama3.2');
-    const [currentSearchBackend, setCurrentSearchBackend] = useState<string>('auto');
-    const [currentSearchEngine, setCurrentSearchEngine] = useState<string>('duckduckgo');
+    const [currentModel, setCurrentModel] = useState<string>(localStorage.getItem('shovs_model') || '');
+    const [currentSearchBackend, setCurrentSearchBackend] = useState<string>(localStorage.getItem('shovs_search_backend') || 'auto');
+    const [currentSearchEngine, setCurrentSearchEngine] = useState<string>(localStorage.getItem('shovs_search_engine') || 'duckduckgo');
     const [messages, setMessages] = useState<Message[]>([]);
     const [contextLines, setContextLines] = useState(0);
     const [isStreaming, setIsStreaming] = useState(false);
@@ -64,6 +64,19 @@ export function useAgent() {
 
     useEffect(() => { fetchHealth(); fetchModels(); fetchTools(); }, []);
     useEffect(() => { fetchSessions(); }, [activeAgentId]);
+
+    useEffect(() => {
+        if (currentModel) localStorage.setItem('shovs_model', currentModel);
+    }, [currentModel]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_search_backend', currentSearchBackend);
+    }, [currentSearchBackend]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_search_engine', currentSearchEngine);
+    }, [currentSearchEngine]);
+
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isStreaming]);
@@ -78,7 +91,19 @@ export function useAgent() {
     const fetchModels = async () => {
         try {
             const data = await fetch('/api/models').then(r => r.json());
-            if (data.models?.length) setModels(data.models);
+            if (data.models) {
+                setModels(data.models);
+                // If no model is current, pick the first available one
+                if (!currentModel) {
+                    const providers = Object.keys(data.models);
+                    for (const p of providers) {
+                        if (data.models[p].length > 0) {
+                            setCurrentModel(`${p}:${data.models[p][0]}`);
+                            break;
+                        }
+                    }
+                }
+            }
         } catch { }
     };
 
@@ -229,13 +254,30 @@ export function useAgent() {
                                 break;
 
                             case 'token':
-                                msg.content += ev.content;
-                                if (lastBlock?.type === 'text') {
-                                    lastBlock.content += ev.content;
+                                let token = ev.content;
+                                msg.content += token;
+
+                                // Thinking Tag Detection Logic
+                                if (token.includes('<think>')) {
+                                    const parts = token.split('<think>');
+                                    if (parts[0]) {
+                                        if (lastBlock?.type === 'text') lastBlock.content += parts[0];
+                                        else addBlock({ type: 'text', content: parts[0] });
+                                    }
+                                    addBlock({ type: 'thought', content: parts[1] || '' });
+                                } else if (token.includes('</think>')) {
+                                    const parts = token.split('</think>');
+                                    if (lastBlock?.type === 'thought') {
+                                        lastBlock.content += parts[0];
+                                    }
+                                    addBlock({ type: 'text', content: parts[1] || '' });
                                 } else {
-                                    // Record start position in msg.content for retract
-                                    lastTextBlockStart = msg.content.length - ev.content.length;
-                                    addBlock({ type: 'text', content: ev.content });
+                                    if (lastBlock?.type === 'text' || lastBlock?.type === 'thought') {
+                                        lastBlock.content += token;
+                                    } else {
+                                        lastTextBlockStart = msg.content.length - token.length;
+                                        addBlock({ type: 'text', content: token });
+                                    }
                                 }
                                 break;
 

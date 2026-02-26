@@ -81,7 +81,7 @@ class ContextEngine:
     def __init__(
         self,
         adapter: OllamaAdapter,
-        compression_model: str = "llama3.2",  # default to main model
+        compression_model: str = "llama3.2",  # Default handled by adapter or config
     ):
         self.adapter           = adapter
         self.compression_model = compression_model

@@ -35,7 +35,7 @@ class Session:
     agent_id:            str = "default"  # Scoping key
     created_at:          str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     updated_at:          str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    model:               str = "llama3.2"
+    model:               str = "llama3.2" # Fallback
     system_prompt:       str = ""
     compressed_context:  str = ""
     sliding_window:      list[dict] = field(default_factory=list)

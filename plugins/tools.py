@@ -504,13 +504,29 @@ def _safe_path(path_str: str) -> Path:
     return p
 
 
-async def _file_create(path: str, content: str, encoding: str = "utf-8") -> str:
+async def _file_create(path: Optional[str] = None, content: str = "", filename: Optional[str] = None, encoding: str = "utf-8") -> str:
     """Create or overwrite a file inside the sandbox."""
     try:
-        target = _safe_path(path)
+        target_path = path or filename
+        if not target_path:
+            return "file_create error: either 'path' or 'filename' is required"
+        target = _safe_path(target_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding=encoding)
-        return f"Created: {target.relative_to(SANDBOX_DIR)} ({len(content)} chars)"
+        
+        rel_path = target.relative_to(SANDBOX_DIR)
+        
+        # If it's an HTML file, return a JSON preview object for the frontend
+        if str(rel_path).lower().endswith(".html"):
+            return json.dumps({
+                "status": "success",
+                "type": "app_view",
+                "title": str(rel_path),
+                "filename": str(rel_path),
+                "path": f"/sandbox/{rel_path}"
+            })
+            
+        return f"Created: {rel_path} ({len(content)} chars)"
     except ValueError as e:
         return f"file_create error: {e}"
     except Exception as e:
@@ -521,16 +537,21 @@ FILE_CREATE_TOOL = Tool(
     name="file_create",
     description=(
         "Create a new file (or overwrite) at the given path inside the sandbox. "
-        "Parent directories are created automatically."
+        "Parent directories are created automatically. "
+        "CRITICAL: If creating .html dashboards, you MUST follow the 'V8 Platinum Standard': "
+        "1. AESTHETICS: Use 'bg-black' (#000) with glassmorphism and glowing neon accents. "
+        "2. INTERACTIVITY: Implement SPA-style views via vanilla JS (toggle .hidden or style.display). "
+        "3. ASSETS: Use Lucide icons (cdn) and Unsplash imagery. No generic place-holders."
     ),
     parameters={
         "type": "object",
         "properties": {
-            "path":     {"type": "string", "description": "File path relative to sandbox root"},
-            "content":  {"type": "string", "description": "File content to write"},
+            "path":     {"type": "string", "description": "File path relative to sandbox root (Alias: filename)"},
+            "filename": {"type": "string", "description": "Alias for path"},
+            "content":  {"type": "string", "description": "File content to write (MUST escape double quotes!)"},
             "encoding": {"type": "string", "description": "Encoding (default utf-8)", "default": "utf-8"},
         },
-        "required": ["path", "content"],
+        "required": ["content"],
     },
     handler=_file_create,
     tags=["files"],
@@ -1084,10 +1105,9 @@ async def _generate_app(html_content: str, title: str = "Standalone App") -> str
     import hashlib
     import time
     
-    # Generate a unique hash-based filename
-    content_hash = hashlib.md5(f"{html_content}{time.time()}".encode()).hexdigest()[:10]
-    safe_title = re.sub(r'[^a-zA-Z0-9]', '_', title).lower()[:20]
-    filename = f"app_{safe_title}_{content_hash}.html"
+    # Generate a clean filename based on title
+    safe_title = re.sub(r'[^a-zA-Z0-9]', '_', title).lower().strip("_")[:30]
+    filename = f"{safe_title}.html" if safe_title else "app.html"
     file_path = SANDBOX_DIR / filename
     
     # Inject Premium V8 Platinum Theme if not already present
@@ -1104,12 +1124,14 @@ async def _generate_app(html_content: str, title: str = "Standalone App") -> str
     <style>
         :root {{ --bg: #000; --text: #fff; --primary: #00ff85; }}
         body {{ 
-            background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; margin: 0; min-height: 100vh;
+            background: #000; color: var(--text); font-family: 'Inter', sans-serif; margin: 0; min-height: 100vh;
             -webkit-font-smoothing: antialiased;
         }}
+        .glass {{ background: rgba(255,255,255,0.03); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); }}
         ::-webkit-scrollbar {{ width: 6px; }}
-        ::-webkit-scrollbar-thumb {{ background: #333; border-radius: 10px; }}
-        .v8-card {{ background: #0a0a0a; border: 1px solid #1a1a1a; border-radius: 12px; }}
+        ::-webkit-scrollbar-thumb {{ background: #222; border-radius: 10px; }}
+        .v8-card {{ background: #050505; border: 1px solid #111; border-radius: 12px; transition: all 0.3s ease; }}
+        .v8-card:hover {{ border-color: var(--primary); box-shadow: 0 0 20px rgba(0,255,133,0.1); }}
     </style>
 </head>
 <body class="p-6">
@@ -1131,11 +1153,16 @@ async def _generate_app(html_content: str, title: str = "Standalone App") -> str
 
 GENERATE_APP_TOOL = Tool(
     name="generate_app",
-    description="Generate a standalone, interactive HTML application or dashboard. Uses a premium 'V8 Platinum' theme with TailwindCSS and Lucide-React support. Returns an isolated view.",
+    description=(
+        "Generate a standalone, interactive HTML application or dashboard. "
+        "MUST follow the 'V8 Platinum Standard' (Production-grade, True Black #000). "
+        "Requires modern typography (e.g. Outfit, Syne), glassmorphism, and SPA-style internal routing. "
+        "Apps MUST feel alive with micro-animations and staggered reveals."
+    ),
     parameters={
         "type": "object",
         "properties": {
-            "html_content": {"type": "string", "description": "The HTML body. CRITICAL: You MUST escape all double quotes (\") in this string using backslashes (\\\") or the JSON will break."},
+            "html_content": {"type": "string", "description": "The HTML body. CRITICAL: Escape all double quotes (\") as \\\" and use 'bg-black' for backgrounds."},
             "title": {"type": "string", "description": "The application title."}
         },
         "required": ["html_content"]

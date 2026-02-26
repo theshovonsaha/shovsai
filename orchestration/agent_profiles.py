@@ -13,13 +13,26 @@ from pydantic import BaseModel, Field
 
 DB_PATH = "agents.db"
 
+PLATINUM_SYSTEM_PROMPT = (
+    "You are the 'shovs' V8 Platinum AI. Your mission: Production-grade intelligence with a Luxury-Dark aesthetic.\n\n"
+    "--- V8 PLATINUM DIRECTIVES ---\n"
+    "1. TRUE BLACK: All HTML/SVG output must use background: #000000. No exceptions.\n"
+    "2. ACCENTS: Use electric cyan (#00d1ff) and deep violet (#8b5cf6) for highlights and glow.\n"
+    "3. SPA ARCHITECTURE: Every app is a Single-Page Application (SPA). Use vanilla JS to manage sections/tabs dynamically. Do not create static multi-page flows.\n"
+    "4. TYPOGRAPHY: Use 'Inter' or 'Roboto Mono' via Google Fonts. Pair with dramatic scale and asymmetric layouts.\n"
+    "5. NO SLOP: No placeholders. Use real data, Lucide icons (CDN), and high-quality assets.\n\n"
+    "--- BEHAVIORAL STANDARDS ---\n"
+    "- CONTEXT: Prioritize 'Historical Context' for persona consistency (e.g. Tony Stark mode).\n"
+    "- TOOLS: Output JSON ONLY: {\"tool\": \"...\", \"arguments\": {...}}.\n"
+)
+
 class AgentProfile(BaseModel):
     id:            str = Field(default_factory=lambda: str(uuid.uuid4()))
     name:          str
     description:   str = ""
-    model:         str = "llama3.2"
+    model:         str = "llama3.2"  # Fallback only
     embed_model:   str = "nomic-embed-text"
-    system_prompt: str = "You are a specialized AI assistant."
+    system_prompt: str = PLATINUM_SYSTEM_PROMPT
     tools:         List[str] = Field(default_factory=lambda: ["web_search", "web_fetch"])
     avatar_url:    Optional[str] = None
     created_at:    str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -55,14 +68,29 @@ class ProfileManager:
             conn.commit()
 
     def _ensure_default_agent(self):
-        """Ensure a 'default' agent always exists for backward compatibility."""
-        if not self.get("default"):
+        """Ensure a 'default' agent always exists and all generic agents are upgraded."""
+        existing_default = self.get("default")
+        if not existing_default:
             self.create(AgentProfile(
                 id="default",
-                name="Global Assistant",
-                description="The standard all-purpose agent.",
+                name="shovs Platinum Assistant",
+                description="The standard high-performance V8 agent.",
+                system_prompt=PLATINUM_SYSTEM_PROMPT,
                 tools=["web_search", "web_fetch", "image_search", "bash", "file_create", "file_view", "file_str_replace", "weather_fetch", "places_search", "places_map", "store_memory", "query_memory"]
             ))
+        
+        # Global upgrade for all generic agents
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM agent_profiles")
+            for row in cursor.fetchall():
+                p = self._row_to_profile(row)
+                if p.system_prompt == "You are a specialized AI assistant." or "V8 Platinum" not in p.system_prompt:
+                    p.system_prompt = PLATINUM_SYSTEM_PROMPT
+                    if p.id == "default": p.name = "shovs Platinum Assistant"
+                    self.create(p)
+                    print(f"[ProfileManager] Upgraded agent '{p.name}' ({p.id}) to V8 Platinum standards.")
 
     def create(self, p: AgentProfile) -> AgentProfile:
         with sqlite3.connect(self.db_path) as conn:

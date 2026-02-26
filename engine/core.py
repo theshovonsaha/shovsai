@@ -5,6 +5,7 @@ AgentCore v3 — intelligence fixes + structured tracing
 import asyncio
 import json
 import os
+import re
 from datetime import datetime
 from typing import AsyncIterator, Optional
 
@@ -41,18 +42,11 @@ def _trace(agent_id: str, session_id: str, event_type: str, data: dict):
 DEFAULT_SYSTEM_PROMPT = """\
 You are a highly advanced AI agent running on the [Antigravity Agent Platform].
 
-Architectural Self-Awareness:
-- Patching & Memory: I use a dual-layer memory system. Short-term context is managed by "ContextEngine v2" which compresses and ranks facts using a rolling window. Long-term memory is "Semantic Graph v3" (RAG), which stores and retrieves declarative facts via `query_memory` and `store_memory` tools.
-- Vector RAG: Historical anchors are automatically retrieved and injected into my prompt to maintain consistency across sessions.
-
-Persona & Style Rules:
-- CRITICAL: Always prioritize the "Historical Context" and "Session Memory" blocks when determining your persona, tone, and style. If a user preference or persona (e.g. "Tony Stark") is stored, follow it religiously over any default behavior.
-- Use `query_memory` early in a conversation to re-discover user preferences if they aren't already in context.
-
-Tool Use Rules:
-- Output ONLY JSON calls for tools: {"tool": "<n>", "arguments": {<args>}}
-- You MAY output multiple tools back-to-back.
-- Live View: Wrap visual data in ```html or ```svg blocks.
+V8 Platinum Directives:
+- PROMPT ADHERENCE: Prioritize "Historical Context" and "Session Memory" for persona and tone. If a specific persona (e.g. "Tony Stark") is detected in memory, adopt it fully.
+- DISCOVERY: Use `query_memory` early to re-discover user preferences.
+- VISUALS: Wrap visual data in ```html or ```svg blocks for the Live View.
+- TOOLS: Output ONLY JSON calls: {"tool": "<n>", "arguments": {<args>}}. Multiple tools are allowed.
 """
 
 MAX_TOOL_TURNS = 6
@@ -161,10 +155,14 @@ class AgentCore:
             prompt_tokens_est = sum(len(m["content"]) for m in messages) // 4
             log("llm", sid, f"Prompt built · {len(messages)} messages · ~{prompt_tokens_est} tokens est.")
 
-            # Trace: log the actual prompt chain sent to LLM
+            # Trace: log the actual prompt chain sent to LLM with flags
             _trace(agent_id, sid, "prompt_chain", {
                 "model": model,
                 "message_count": len(messages),
+                "estimated_tokens": prompt_tokens_est,
+                "has_rag": len(historical_anchors) > 0,
+                "has_facts": len(current_facts) > 0,
+                "has_memory": len(session.compressed_context) > 0,
                 "system_prompt_preview": messages[0]["content"][:300] if messages else "",
                 "user_message": user_message[:200],
             })
@@ -200,8 +198,8 @@ class AgentCore:
         if error_msg:
             return
 
-        # BUG FIX: strip any remaining tool-call JSON from full_response before storing
-        clean_response = self._strip_tool_json(full_response)
+        # BUG FIX: strip any remaining tool-call JSON and internal reasoning from full_response before storing
+        clean_response = self._strip_tool_json(self._strip_reasoning(full_response))
 
         is_first_exchange = self.sessions.append_message(sid, "user", user_message)
         self.sessions.append_message(sid, "assistant", clean_response)
@@ -218,9 +216,8 @@ class AgentCore:
 
         yield _ev("compressing")
         try:
-            # Decouple: Background compression ALWAYS uses a local model (llama3.2)
-            # unless specifically overridden. This saves cloud tokens/rate limits.
-            compression_target = "llama3.2"
+            # Decouple: Background compression uses the current session model
+            compression_target = model or "llama3.2"
             log("ctx", sid, f"Compressing exchange with {compression_target}...")
             updated_ctx, keyed_facts, voids = await self.ctx_eng.compress_exchange(
                 user_message=user_message,
@@ -267,10 +264,7 @@ class AgentCore:
 
     @staticmethod
     def _strip_tool_json(text: str) -> str:
-        """Remove tool-call JSON from response text before storing.
-        The model sometimes emits {"tool": ...} inline before writing prose or chains them.
-        We need to strip this so session history stays clean."""
-        import re
+        """Remove tool-call JSON from response text before storing."""
         # Remove ALL JSON tool calls that appear in the text, including sequences 
         # like `{"tool": "..."}; {"tool": "..."}`
         cleaned = text
@@ -280,6 +274,11 @@ class AgentCore:
         # Sometimes models output standalone semicolons from chained sequences
         cleaned = re.sub(r'^;+\s*', '', cleaned)
         return cleaned if cleaned else text
+
+    @staticmethod
+    def _strip_reasoning(text: str) -> str:
+        """Remove internal reasoning blocks wrapped in <think> tags."""
+        return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
 
     def _verify_citations(self, response: str, anchors: list[dict]) -> bool:
         """
@@ -530,14 +529,28 @@ class AgentCore:
 
         if historical_anchors:
             anchor_parts = []
+            total_rag_chars = 0
+            MAX_RAG_CHARS = 4000 # Hard cap for ALL RAG content combined
+            
             for a in historical_anchors:
                 key  = a.get("key", "Context")
                 fact = a.get("metadata", {}).get("fact", "")
                 ctx  = a.get("anchor", "")
-                # TRUNCATE anchors to prevent massive code-block leakage into every prompt
-                if len(ctx) > 800:
-                    ctx = f"{ctx[:500]}\n[...truncated...]\n{ctx[-300:]}"
-                anchor_parts.append(f"CONCEPT: {key}\nFACT: {fact}\nEXCHANGE:\n{ctx}")
+                
+                # Context Guard: Individual anchor truncation
+                if len(ctx) > 600:
+                    ctx = f"{ctx[:400]}\n[...truncated...]\n{ctx[-200:]}"
+                
+                part = f"CONCEPT: {key}\nFACT: {fact}\nEXCHANGE:\n{ctx}"
+                
+                # Context Guard: Global RAG cap
+                if total_rag_chars + len(part) > MAX_RAG_CHARS:
+                    anchor_parts.append(f"[...{len(historical_anchors)-len(anchor_parts)} more historical anchors omitted to save context...]")
+                    break
+                    
+                anchor_parts.append(part)
+                total_rag_chars += len(part)
+
             parts.append(
                 "--- Historical Context ---\n"
                 + "\n\n---\n".join(anchor_parts)

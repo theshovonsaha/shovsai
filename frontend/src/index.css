@@ -176,6 +176,36 @@ select:focus {
   border-color: var(--accent);
 }
 
+.provider-group {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+}
+
+.provider-group:last-child {
+  border-bottom: none;
+}
+
+.provider-header {
+  padding: 8px 12px 4px;
+  font-size: 9px;
+  color: var(--text-dim);
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+a {
+  color: var(--accent2);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+a:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
 /* ── Sidebar ── */
 .sidebar {
   border-right: 1px solid var(--border);
@@ -2300,32 +2330,71 @@ textarea::placeholder {
     padding: 10px;
   }
 
-  .input-area {
-    padding: 8px;
-    margin-bottom: 5px;
-  }
-
-  .input-prefix {
-    display: none;
-  }
-
-  .msg {
-    max-width: 95%;
-  }
-
-  .tool-text {
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  .tool-label {
-    font-size: 8px;
-  }
-
   .html-render-sandbox iframe {
     height: 350px !important;
   }
+
+  .sidebar {
+    width: 60px !important;
+  }
+
+  .sidebar-tab span,
+  .s-title,
+  .s-meta,
+  .ctx-label,
+  .ctx-detail,
+  .sidebar-title,
+  .btn-new {
+    display: none;
+  }
+
+  .sidebar-head {
+    justify-content: center;
+    padding: 10px 0;
+  }
+
+  .sidebar-tab {
+    padding: 15px 0;
+  }
+
+  .layout {
+    grid-template-columns: 60px 1fr;
+  }
+
+  .msg {
+    padding: 12px 16px;
+    grid-template-columns: 40px 1fr;
+    max-width: 100%;
+  }
+
+  .topbar {
+    padding: 0 10px;
+  }
+
+  .logo-a,
+  .logo-b,
+  .logo-sep {
+    display: none;
+  }
 }
+
+.msg-body {
+  font-size: 13px;
+  line-height: 1.75;
+  color: var(--text);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  min-width: 0;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 20px 0;
+  scroll-behavior: smooth;
+}
+
 /* ══════════════════════════════════════════════════════════════════
    CSS ISOLATION — Prevent bidirectional style leakage
    Sandboxed iframes and code previews must not bleed into the host.
@@ -2356,7 +2425,7 @@ textarea::placeholder {
   color: #e1e1e1;
   white-space: pre;
   margin: 8px 0;
-  border: 1px solid rgba(255,255,255,0.06);
+  border: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .rich-content-viewer p code,
@@ -2365,5 +2434,73 @@ textarea::placeholder {
   padding: 1px 5px;
   border-radius: 3px;
   font-size: 11px;
-  background: rgba(255,255,255,0.08) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+/* --- Thought Blocks (Thinking Models) --- */
+.thought-block {
+    margin: 12px 0;
+    padding: 12px 16px;
+    background: rgba(139, 92, 246, 0.03);
+    border-left: 2px solid rgba(139, 92, 246, 0.3);
+    border-radius: 4px;
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    animation: thought-fade-in 0.5s ease;
+}
+
+.thought-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-family: var(--font-mono);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 10px;
+    color: var(--accent1); /* Violet accent */
+    opacity: 0.8;
+}
+
+.thought-icon {
+    font-size: 14px;
+    filter: drop-shadow(0 0 4px var(--accent1));
+}
+
+.thought-content {
+    white-space: pre-wrap;
+    font-style: italic;
+    opacity: 0.85;
+}
+
+@keyframes thought-fade-in {
+    from { opacity: 0; transform: translateY(5px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Interactive Thought Block Styles */
+.thought-header {
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s ease;
+}
+
+.thought-header:hover {
+    background: rgba(139, 92, 246, 0.08);
+}
+
+.thought-header .thought-toggle {
+    margin-left: auto;
+    font-size: 12px;
+    opacity: 0.5;
+    transition: transform 0.2s ease;
+}
+
+.thought-block.expanded .thought-header .thought-toggle {
+    opacity: 1;
+}
+
+.thought-block.expanded {
+    background: rgba(139, 92, 246, 0.05);
+    border-left-color: var(--accent1);
 }

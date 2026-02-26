@@ -11,6 +11,10 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
         rewrite: (path) => path.replace(/^\/api/, '')
+      },
+      '/sandbox': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true
       }
     }
   }

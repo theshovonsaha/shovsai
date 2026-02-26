@@ -12,6 +12,7 @@ load_dotenv()
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from typing import Optional, List
 
@@ -31,7 +32,7 @@ from api.log_routes import setup_log_routes
 from api.voice_endpoint import setup_voice_routes
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DEFAULT_CHAT_MODEL = "llama3.2"
+FALLBACK_CHAT_MODEL = "llama3.2"
 
 # ── Singletons ────────────────────────────────────────────────────────────────
 adapter         = OllamaAdapter()
@@ -40,7 +41,7 @@ register_all_tools(tool_registry)
 register_web_tools(tool_registry)
 
 session_manager = SessionManager(max_sessions=200)
-context_engine  = ContextEngine(adapter=adapter, compression_model=DEFAULT_CHAT_MODEL)
+context_engine  = ContextEngine(adapter=adapter, compression_model=FALLBACK_CHAT_MODEL)
 file_processor  = FileProcessor()
 profile_manager = ProfileManager()
 
@@ -57,6 +58,11 @@ app = FastAPI(title="shovs", version="0.5.0")
 setup_log_routes(app)
 setup_voice_routes(app, agent_manager)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ── Static Sandbox Shell ──────────────────────────────────────────────────────
+from plugins.tools import SANDBOX_DIR
+SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
+app.mount("/sandbox", StaticFiles(directory=str(SANDBOX_DIR)), name="sandbox")
 
 class ChatRequest(BaseModel):
     message:       str  = Field(..., min_length=1, max_length=32_000)
@@ -100,28 +106,34 @@ async def list_models():
     openai = create_adapter("openai")
     gemini = create_adapter("gemini")
     
-    models = []
+    grouped_models = {
+        "ollama": [],
+        "groq": [],
+        "openai": [],
+        "gemini": []
+    }
+
     try:
         m_local = await ollama.list_models()
-        models.extend([f"ollama:{m}" for m in m_local] if m_local else [])
+        if m_local: grouped_models["ollama"] = m_local
     except: pass
     
     try:
         m_cloud = await groq.list_models()
-        models.extend([f"groq:{m}" for m in m_cloud] if m_cloud else [])
+        if m_cloud: grouped_models["groq"] = m_cloud
     except: pass
 
     try:
         m_openai = await openai.list_models()
-        models.extend([f"openai:{m}" for m in m_openai] if m_openai else [])
+        if m_openai: grouped_models["openai"] = m_openai
     except: pass
 
     try:
         m_gemini = await gemini.list_models()
-        models.extend([f"gemini:{m}" for m in m_gemini] if m_gemini else [])
+        if m_gemini: grouped_models["gemini"] = m_gemini
     except: pass
     
-    return {"models": models}
+    return {"models": grouped_models}
 
 @app.get("/tools")
 async def list_tools():

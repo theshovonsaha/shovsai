@@ -53,6 +53,24 @@ const ToolEvent = ({ type, tool, content }: { type: 'call' | 'result' | 'error';
   );
 };
 
+const ThoughtBlock = ({ content }: { content: string }) => {
+  const [expanded, setExpanded] = React.useState(false);
+  return (
+    <div className={`thought-block ${expanded ? 'expanded' : ''}`}>
+      <div className="thought-header" onClick={() => setExpanded(!expanded)}>
+        <span className="thought-icon">⬡</span>
+        <span className="thought-label">REASONING</span>
+        <span className="thought-toggle">{expanded ? '▴' : '▾'}</span>
+      </div>
+      {expanded && (
+        <div className="thought-content">
+          <RichContentViewer content={content} />
+        </div>
+      )}
+    </div>
+  );
+};
+
 function App() {
   const agent = useAgent();
   const [inputText, setInputText] = useState('');
@@ -238,6 +256,8 @@ function App() {
                   switch (block.type) {
                     case 'text':
                       return <RichContentViewer key={block.id} content={block.content} />;
+                    case 'thought':
+                      return <ThoughtBlock key={block.id} content={block.content} />;
                     case 'tool_call':
                       return <ToolEvent key={block.id} type="call" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'tool_result':
