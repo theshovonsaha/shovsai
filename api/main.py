@@ -39,8 +39,6 @@ FALLBACK_CHAT_MODEL = "llama3.2"
 # ── Singletons ────────────────────────────────────────────────────────────────
 adapter         = OllamaAdapter()
 tool_registry   = ToolRegistry()
-register_all_tools(tool_registry)
-register_web_tools(tool_registry)
 
 session_manager = SessionManager(max_sessions=200)
 context_engine  = ContextEngine(adapter=adapter, compression_model=FALLBACK_CHAT_MODEL)
@@ -56,6 +54,10 @@ agent_manager   = AgentManager(
     global_registry=tool_registry,
     orchestrator=orchestrator
 )
+
+# Register tools with manager for delegation
+register_all_tools(tool_registry, agent_manager=agent_manager)
+register_web_tools(tool_registry)
 
 # ── App ───────────────────────────────────────────────────────────────────────
 app = FastAPI(title="shovs", version="0.5.0")
@@ -86,19 +88,22 @@ async def health():
     groq = create_adapter("groq")
     openai = create_adapter("openai")
     gemini = create_adapter("gemini")
+    anthropic = create_adapter("anthropic")
     
     ollama_ok = await ollama.health()
     groq_ok = await groq.health()
     openai_ok = await openai.health()
     gemini_ok = await gemini.health()
+    anthropic_ok = await anthropic.health()
     
     return {
-        "status": "ok" if (ollama_ok or groq_ok or openai_ok or gemini_ok) else "degraded",
+        "status": "ok" if (ollama_ok or groq_ok or openai_ok or gemini_ok or anthropic_ok) else "degraded",
         "providers": {
             "ollama": ollama_ok,
             "groq": groq_ok,
             "openai": openai_ok,
-            "gemini": gemini_ok
+            "gemini": gemini_ok,
+            "anthropic": anthropic_ok
         },
         "tools": tool_registry.list_tools(),
     }
@@ -109,12 +114,14 @@ async def list_models():
     groq = create_adapter("groq")
     openai = create_adapter("openai")
     gemini = create_adapter("gemini")
+    anthropic = create_adapter("anthropic")
     
     grouped_models = {
         "ollama": [],
         "groq": [],
         "openai": [],
-        "gemini": []
+        "gemini": [],
+        "anthropic": []
     }
 
     try:
@@ -135,6 +142,11 @@ async def list_models():
     try:
         m_gemini = await gemini.list_models()
         if m_gemini: grouped_models["gemini"] = m_gemini
+    except: pass
+
+    try:
+        m_anthropic = await anthropic.list_models()
+        if m_anthropic: grouped_models["anthropic"] = m_anthropic
     except: pass
     
     return {"models": grouped_models}
@@ -184,6 +196,10 @@ async def chat_stream(
             log("agent", "system", f"Incoming request: agent={agent_id} model={model or 'default'}")
             agent_instance = agent_manager.get_agent_instance(agent_id or "default")
 
+            # ── Heartbeat Guard ───────────────────────────────────────────
+            # Yield intermittent comments to keep SSE connections alive
+            # and detect client disconnects promptly.
+            
             async for event in agent_instance.chat_stream(
                 user_message=full_message, 
                 session_id=session_id,
@@ -202,6 +218,7 @@ async def chat_stream(
                 yield f"data: {json.dumps(event)}\n\n"
 
         except Exception as e:
+            log("agent", "stream", f"Generator error: {e}", level="error")
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream",

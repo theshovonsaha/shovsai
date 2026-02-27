@@ -16,3 +16,5 @@ faster-whisper
 soundfile
 numpy
 websockets
+trafilatura
+anthropic

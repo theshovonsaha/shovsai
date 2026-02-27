@@ -42,6 +42,7 @@ class Session:
     full_history:        list[dict] = field(default_factory=list)
     title:               Optional[str] = None
     first_message:       Optional[str] = None
+    parent_id:           Optional[str] = None
     lock:                asyncio.Lock = field(default_factory=asyncio.Lock)
     message_count:       int = 0
 
@@ -72,6 +73,7 @@ class SessionManager:
                     full_history TEXT,
                     title TEXT,
                     first_message TEXT,
+                    parent_id TEXT,
                     message_count INTEGER
                 )
             ''')
@@ -81,6 +83,9 @@ class SessionManager:
             except sqlite3.OperationalError: pass
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN agent_id TEXT DEFAULT 'default'")
+            except sqlite3.OperationalError: pass
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
             except sqlite3.OperationalError: pass
             conn.commit()
 
@@ -106,6 +111,7 @@ class SessionManager:
             full_history=json.loads(r["full_history"]),
             title=r["title"],
             first_message=r["first_message"] if "first_message" in r.keys() else None,
+            parent_id=r["parent_id"] if "parent_id" in r.keys() else None,
             message_count=r["message_count"],
         )
 
@@ -114,14 +120,14 @@ class SessionManager:
             conn.execute('''
                 INSERT OR REPLACE INTO sessions
                 (id, agent_id, created_at, updated_at, model, system_prompt, compressed_context,
-                 sliding_window, full_history, title, first_message, message_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 sliding_window, full_history, title, first_message, parent_id, message_count)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 s.id, s.agent_id, s.created_at, s.updated_at, s.model, s.system_prompt,
                 s.compressed_context,
                 json.dumps(s.sliding_window),
                 json.dumps(s.full_history),
-                s.title, s.first_message, s.message_count,
+                s.title, s.first_message, s.parent_id, s.message_count,
             ))
             conn.commit()
 
@@ -132,11 +138,11 @@ class SessionManager:
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
-    def create(self, model: str, system_prompt: str, agent_id: str = "default", session_id: Optional[str] = None) -> Session:
+    def create(self, model: str, system_prompt: str, agent_id: str = "default", session_id: Optional[str] = None, parent_id: Optional[str] = None) -> Session:
         now = datetime.now(timezone.utc).isoformat()
         sid = session_id or str(uuid.uuid4())
         session = Session(id=sid, agent_id=agent_id, created_at=now, updated_at=now,
-                          model=model, system_prompt=system_prompt)
+                          model=model, system_prompt=system_prompt, parent_id=parent_id)
         self._sessions[sid] = session
         self._save_to_db(session)
         self._evict_if_needed()
@@ -158,12 +164,12 @@ class SessionManager:
                 return s
         return None
 
-    def get_or_create(self, session_id: Optional[str], model: str, system_prompt: str, agent_id: str = "default") -> Session:
+    def get_or_create(self, session_id: Optional[str], model: str, system_prompt: str, agent_id: str = "default", parent_id: Optional[str] = None) -> Session:
         if session_id:
             s = self.get(session_id)
             if s:
                 return s
-        return self.create(model=model, system_prompt=system_prompt, agent_id=agent_id, session_id=session_id)
+        return self.create(model=model, system_prompt=system_prompt, agent_id=agent_id, session_id=session_id, parent_id=parent_id)
 
     def delete(self, session_id: str) -> bool:
         existed = session_id in self._sessions
@@ -228,12 +234,12 @@ class SessionManager:
                 if agent_id:
                     cursor.execute(
                         "SELECT id, title, created_at, updated_at, model, message_count "
-                        "FROM sessions WHERE agent_id = ? ORDER BY updated_at DESC", (agent_id,)
+                        "FROM sessions WHERE agent_id = ? AND parent_id IS NULL ORDER BY updated_at DESC", (agent_id,)
                     )
                 else:
                     cursor.execute(
                         "SELECT id, title, created_at, updated_at, model, message_count "
-                        "FROM sessions ORDER BY updated_at DESC"
+                        "FROM sessions WHERE parent_id IS NULL ORDER BY updated_at DESC"
                     )
                 return [
                     {"id": r["id"], "title": r["title"] or "New Chat",

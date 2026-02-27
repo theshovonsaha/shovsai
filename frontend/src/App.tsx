@@ -136,10 +136,12 @@ function App() {
 
       {/* Topbar */}
       <header className="topbar">
-        <button className="home-btn" onClick={() => agent.setActiveAgentId(null)}>← agents</button>
-        <span className="logo-a">SHOVS</span>
-        <span className="logo-sep">//</span>
-        <span className="logo-b">PLATFORM</span>
+        <button className="home-btn" onClick={() => agent.setActiveAgentId(null)}>← Agents</button>
+        <div className="branding">
+          <span className="logo-a">SHOVS</span>
+          <span className="logo-sep">//</span>
+          <span className="logo-b">PLATFORM</span>
+        </div>
         <StatusDot />
         <div className="topbar-right">
           <button
@@ -410,6 +412,10 @@ function App() {
             lastUserText={agent.lastUserText}
             currentAgentToken={agent.currentToken}
             lastAgentResponse={agent.lastAgentResponse}
+            voiceSensitivity={agent.voiceSensitivity}
+            setVoiceSensitivity={agent.setVoiceSensitivity}
+            voiceModel={agent.voiceModel}
+            setVoiceModel={agent.setVoiceModel}
             onToggleMic={() => {
               if (agent.isListening) {
                 agent.stopRecording();

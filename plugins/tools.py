@@ -50,6 +50,8 @@ HTTP_TIMEOUT      = 20.0
 
 SANDBOX_DIR.mkdir(parents=True, exist_ok=True)
 
+_agent_manager: Optional[AgentManager] = None  # Injected during registration
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  WEB SEARCH  —  DuckDuckGo HTML scrape (no API key)
@@ -245,78 +247,47 @@ async def _web_fetch(url: str, max_chars: int = 12000) -> str:
 
             html = resp.text
 
-            # — Smart structured extraction using html.parser —
-            from html.parser import HTMLParser
+            # — PHASE 20: High-Signal Extraction using trafilatura —
+            import trafilatura
+            
+            # Extract main content with readability logic
+            clean_text = trafilatura.extract(
+                html, 
+                include_links=True, 
+                include_images=False, 
+                output_format='txt',
+                include_comments=False,
+                include_tables=True
+            )
+            
+            # Metadata extraction
+            metadata = trafilatura.extract_metadata(html)
+            title = metadata.title if metadata and metadata.title else url
 
-            class SmartExtractor(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.chunks: list[str] = []
-                    self._skip = False
-                    self._tag_stack: list[str] = []
-                    self.page_title = ""
-                    self._in_title = False
+            if not clean_text:
+                # Fallback to a very basic strip if trafilatura fails
+                from html.parser import HTMLParser
+                class SimpleExtractor(HTMLParser):
+                    def __init__(self):
+                        super().__init__()
+                        self.text = []
+                    def handle_data(self, d): self.text.append(d)
+                    def get_text(self): return " ".join(self.text)
+                
+                ext = SimpleExtractor()
+                ext.feed(html)
+                clean_text = ext.get_text()
 
-                def handle_starttag(self, tag, attrs):
-                    self._tag_stack.append(tag)
-                    if tag in ("script", "style", "nav", "footer", "aside", "noscript", "head"):
-                        self._skip = True
-                    if tag == "title":
-                        self._in_title = True
-                    # Add structural markers
-                    if tag in ("h1", "h2", "h3", "h4"):
-                        self.chunks.append(f"\n\n### ")
-                    elif tag == "p":
-                        self.chunks.append("\n\n")
-                    elif tag == "li":
-                        self.chunks.append("\n- ")
-                    elif tag == "br":
-                        self.chunks.append("\n")
-                    elif tag == "a":
-                        href = dict(attrs).get("href", "")
-                        if href and href.startswith("http"):
-                            self._current_href = href
-                        else:
-                            self._current_href = ""
-                    else:
-                        self._current_href = ""
-
-                def handle_endtag(self, tag):
-                    if self._tag_stack and self._tag_stack[-1] == tag:
-                        self._tag_stack.pop()
-                    if tag in ("script", "style", "nav", "footer", "aside", "noscript", "head"):
-                        self._skip = False
-                    if tag == "title":
-                        self._in_title = False
-
-                def handle_data(self, data):
-                    if self._in_title:
-                        self.page_title = data.strip()
-                        return
-                    if self._skip:
-                        return
-                    text = data.strip()
-                    if text:
-                        self.chunks.append(text)
-
-            extractor = SmartExtractor()
-            extractor.feed(html)
-
-            # Join and clean up
-            text = " ".join(extractor.chunks)
-            text = re.sub(r" {2,}", " ", text)
-            text = re.sub(r"\n{3,}", "\n\n", text)
-            text = text.strip()
-
-            title = extractor.page_title or url
-
+            # Structure the final response
+            final_content = clean_text.strip()[:max_chars]
+            
             return json.dumps({
                 "type": "web_fetch_result",
                 "url": url,
                 "title": title,
-                "content": text[:max_chars],
-                "truncated": len(text) > max_chars,
-                "total_length": len(text),
+                "content": final_content,
+                "truncated": len(clean_text) > max_chars,
+                "total_length": len(clean_text)
             })
 
     except httpx.HTTPStatusError as e:
@@ -1294,6 +1265,47 @@ PDF_PROCESSOR_TOOL = Tool(
 )
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  DELEGATION  —  Agentic Tool for orchestrating other agents
+# ══════════════════════════════════════════════════════════════════════════════
+
+async def _delegate_to_agent(target_agent_id: str, task: str, **kwargs) -> str:
+    """Handler for the delegate_to_agent tool."""
+    if not _agent_manager:
+        return "Error: Agent Manager not initialized for delegation."
+    
+    try:
+        parent_id = kwargs.get("_session_id")
+        log("agent", "system", f"Delegating task to '{target_agent_id}': {task[:50]}...", level="info")
+        result = await _agent_manager.run_agent_task(target_agent_id, task, parent_id=parent_id)
+        return result
+    except Exception as e:
+        return f"Delegation error: {e}"
+
+DELEGATE_TO_AGENT_TOOL = Tool(
+    name="delegate_to_agent",
+    description=(
+        "Delegate a specific task to another specialized agent. "
+        "Use this for research, coding, or complex logic that requires a different personality or mindset."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "target_agent_id": {
+                "type": "string", 
+                "description": "ID of the agent to delegate to (e.g., 'coder', 'researcher', 'default')."
+            },
+            "task": {
+                "type": "string",
+                "description": "Detailed description of what the sub-agent should do."
+            }
+        },
+        "required": ["target_agent_id", "task"]
+    },
+    handler=_delegate_to_agent,
+    tags=["agentic", "system"]
+)
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  Registration helper
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1311,10 +1323,15 @@ ALL_TOOLS = [
     QUERY_MEMORY_TOOL,
     GENERATE_APP_TOOL,
     PDF_PROCESSOR_TOOL,
+    DELEGATE_TO_AGENT_TOOL,
 ]
 
-def register_all_tools(registry: ToolRegistry) -> None:
+def register_all_tools(registry: ToolRegistry, agent_manager: Optional[AgentManager] = None) -> None:
     """Register every built-in tool. Call this in main.py after creating tool_registry."""
+    global _agent_manager
+    if agent_manager:
+        _agent_manager = agent_manager
+
     for tool in ALL_TOOLS:
         registry.register(tool)
     print(f"[tools] Registered {len(ALL_TOOLS)} built-in tools")

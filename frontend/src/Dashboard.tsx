@@ -54,12 +54,19 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
 
     return (
         <div className="dashboard-container">
-            <div className="dashboard-header">
-                <h1><span>AGENT</span> // PLATFORM</h1>
-                <button className="primary-btn" onClick={() => setShowCreateModal(true)}>
-                    + new agent
+            <header className="dashboard-header">
+                <div className="branding">
+                    <span className="logo-a">SHOVS</span>
+                    <span className="logo-sep">//</span>
+                    <span className="logo-b">PLATFORM</span>
+                </div>
+                <button
+                    className="btn-create-agent"
+                    onClick={() => setShowCreateModal(true)}
+                >
+                    + Create Agent
                 </button>
-            </div>
+            </header>
 
             <div className="agent-grid">
                 {agents.length === 0 ? (
@@ -117,13 +124,15 @@ const CreateAgentModal: React.FC<{ onClose: () => void; onCreated: () => void }>
     const [embedModel, setEmbedModel] = useState('nomic-embed-text');
     const [selectedTools, setSelectedTools] = useState<string[]>([]);
     const [availableTools, setAvailableTools] = useState<any[]>([]);
-    const [availableModels, setAvailableModels] = useState<string[]>(['llama3.2']);
+    const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({ 'ollama': ['llama3.2'] });
     const [availableEmbedModels] = useState<string[]>(['nomic-embed-text', 'text-embedding-3-small']);
     const [creating, setCreating] = useState(false);
 
     useEffect(() => {
         fetch('/api/tools').then(r => r.json()).then(d => setAvailableTools(d.tools || []));
-        fetch('/api/models').then(r => r.json()).then(d => { if (d.models?.length) setAvailableModels(d.models); });
+        fetch('/api/models').then(r => r.json()).then(d => {
+            if (d.models) setAvailableModels(d.models);
+        });
     }, []);
 
     const toggleTool = (name: string) => setSelectedTools(prev =>

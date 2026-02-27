@@ -35,8 +35,8 @@ export function useAgent() {
     const [models, setModels] = useState<Record<string, string[]>>({ ollama: ['llama3.2'] });
     const [tools, setTools] = useState<any[]>([]);
     const [sessions, setSessions] = useState<Session[]>([]);
-    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
-    const [activeAgentId, setActiveAgentId] = useState<string | null>(null);
+    const [currentSessionId, setCurrentSessionId] = useState<string | null>(localStorage.getItem('shovs_current_sid'));
+    const [activeAgentId, setActiveAgentId] = useState<string | null>(localStorage.getItem('shovs_active_agent_id'));
     const [currentModel, setCurrentModel] = useState<string>(localStorage.getItem('shovs_model') || '');
     const [currentSearchBackend, setCurrentSearchBackend] = useState<string>(localStorage.getItem('shovs_search_backend') || 'auto');
     const [currentSearchEngine, setCurrentSearchEngine] = useState<string>(localStorage.getItem('shovs_search_engine') || 'duckduckgo');
@@ -58,6 +58,10 @@ export function useAgent() {
     const [currentToken, setCurrentToken] = useState('');
     const [lastAgentResponse, setLastAgentResponse] = useState('');
     const [voiceStatus, setVoiceStatus] = useState<'idle' | 'recording' | 'processing' | 'speaking'>('idle');
+
+    // Voice Settings
+    const [voiceSensitivity, setVoiceSensitivity] = useState<number>(Number(localStorage.getItem('shovs_voice_sensitivity')) || 0.5);
+    const [voiceModel, setVoiceModel] = useState<string>(localStorage.getItem('shovs_voice_model') || 'aura-orion-en');
 
     const wsRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -93,6 +97,32 @@ export function useAgent() {
     useEffect(() => {
         localStorage.setItem('shovs_context_model', contextModel);
     }, [contextModel]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_voice_sensitivity', voiceSensitivity.toString());
+    }, [voiceSensitivity]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_voice_model', voiceModel);
+    }, [voiceModel]);
+
+    useEffect(() => {
+        if (activeAgentId) localStorage.setItem('shovs_active_agent_id', activeAgentId);
+        else localStorage.removeItem('shovs_active_agent_id');
+    }, [activeAgentId]);
+
+    useEffect(() => {
+        if (currentSessionId) localStorage.setItem('shovs_current_sid', currentSessionId);
+        else localStorage.removeItem('shovs_current_sid');
+    }, [currentSessionId]);
+
+    // Auto-load session on first mount if SID exists
+    useEffect(() => {
+        const savedSid = localStorage.getItem('shovs_current_sid');
+        if (savedSid) {
+            loadSession(savedSid);
+        }
+    }, []);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -429,7 +459,9 @@ export function useAgent() {
                     type: 'config',
                     session_id: currentSessionId,
                     agent_id: activeAgentId,
-                    model: currentModel
+                    model: currentModel,
+                    voice_model: voiceModel,
+                    sensitivity: voiceSensitivity
                 }));
             };
 
@@ -579,6 +611,8 @@ export function useAgent() {
         usePlanner, setUsePlanner,
         plannerModel, setPlannerModel,
         contextModel, setContextModel,
+        voiceSensitivity, setVoiceSensitivity,
+        voiceModel, setVoiceModel,
         clearSessionContext,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,

@@ -56,9 +56,11 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
             session_id = config.get("session_id")
             agent_id = config.get("agent_id", "default")
             model = config.get("model")
+            voice_model = config.get("voice_model", "aura-orion-en")
+            sensitivity = config.get("sensitivity", 0.5)
 
             await ws.send_json({"type": "config_ack", "status": "ok"})
-            log("system", session_id or "voice", f"Voice config: agent={agent_id} model={model}")
+            log("system", session_id or "voice", f"Voice config: agent={agent_id} model={model} v_model={voice_model} sens={sensitivity}")
 
             # Phase 2: Dual-Mode Loop (Streaming STT & TTS)
             while True:
@@ -96,12 +98,17 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
                         dg_connection.on(EventType.MESSAGE, on_message)
                         
                         # In v5, options are passed as keyword arguments to connect
+                        # Map sensitivity (0–1) to Deepgram endpointing (ms)
+                        # Lower sensitivity = longer endpointing (more patient)
+                        # Higher sensitivity = shorter endpointing (more aggressive)
+                        endpointing_ms = int(1000 - (sensitivity * 900)) # 100ms to 1000ms range
+                        
                         async with dg_connection.connect(
                             model="nova-3",
                             language="en",
                             smart_format=True,
                             interim_results=True,
-                            endpointing=300, # Quick end-of-speech detection
+                            endpointing=endpointing_ms, 
                         ) as live:
                             # Bridge loop
                             while True:
@@ -184,14 +191,14 @@ def setup_voice_routes(app: FastAPI, agent_manager) -> None:
                         if any(p in token for p in ".!?\n") and len(sentence_buffer.strip()) > 10:
                             clean_sentence = _clean_text_for_speech(sentence_buffer)
                             if clean_sentence.strip():
-                                async for audio_chunk in _synthesize_speech(clean_sentence):
+                                async for audio_chunk in _synthesize_speech(clean_sentence, voice_model=voice_model):
                                     await ws.send_bytes(audio_chunk)
                             sentence_buffer = ""
 
                 if sentence_buffer.strip():
                     clean_sentence = _clean_text_for_speech(sentence_buffer)
                     if clean_sentence.strip():
-                        async for audio_chunk in _synthesize_speech(clean_sentence):
+                        async for audio_chunk in _synthesize_speech(clean_sentence, voice_model=voice_model):
                             await ws.send_bytes(audio_chunk)
 
                 await ws.send_json({"type": "agent_done", "full_response": full_response})
@@ -362,30 +369,51 @@ async def _transcribe_audio_deepgram(audio_bytes: bytes, api_key: str) -> str:
 
 # ── TTS Engine ────────────────────────────────────────────────────────────────
 
-async def _synthesize_speech(text: str):
+async def _synthesize_speech(text: str, voice_model: str = "aura-orion-en"):
     """
     Convert text to speech audio chunks.
     Prioritizes Deepgram Aura for high-fidelity shovs voice.
     """
-    dg_key = os.getenv("DEEPGRAM_API_KEY")
-    if dg_key:
+    # 0. Handle Deepgram Models
+    if voice_model.startswith("aura-"):
+        dg_key = os.getenv("DEEPGRAM_API_KEY")
+        if dg_key:
+            try:
+                from deepgram import DeepgramClient
+                deepgram = DeepgramClient(dg_key)
+                
+                async for chunk in deepgram.speak.v("1").audio.generate(
+                    text=text,
+                    model=voice_model,
+                    encoding="linear16",
+                    sample_rate=16000
+                ):
+                    if chunk:
+                        yield chunk
+                return
+            except Exception as e:
+                log("system", "voice", f"Deepgram TTS failed: {e}", level="warn")
+
+    # 1. Handle Edge TTS (Free Cloud)
+    if voice_model.startswith("edge:"):
+        voice_name = voice_model.split(":", 1)[1]
         try:
-            from deepgram import DeepgramClient
-            deepgram = DeepgramClient(dg_key)
-            
-            # v5 style: use generate method which returns an iterator of bytes
-            # the generate method is on speak.v("1").audio
-            async for chunk in deepgram.speak.v("1").audio.generate(
-                text=text,
-                model="aura-orion-en",
-                encoding="linear16", # Common for streaming
-                sample_rate=16000
-            ):
-                if chunk:
-                    yield chunk
+            import edge_tts
+            communicate = edge_tts.Communicate(text, voice_name)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    yield chunk["data"]
             return
         except Exception as e:
-            log("system", "voice", f"Deepgram TTS failed: {e}", level="warn")
+            log("system", "voice", f"Edge TTS failed: {e}", level="warn")
+
+    # 2. Handle HF / Local (Stub for Hugging Face integration)
+    if voice_model == "hf-parler":
+        # In a real scenario, this would call a local transformers model
+        # For now, fallback with log
+        log("system", "voice", "HF Parler-TTS selected — using edge-tts placeholder")
+        voice_model = "edge:en-US-GuyNeural"
+        # continue fallback below...
 
     # Fallback to local/free engines
     # Try Kokoro first (fastest local)

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 
 interface PremiumSelectProps {
     value: string;
-    options: Record<string, string[]>;
+    options: string[] | Record<string, string[]>;
     onChange: (value: string) => void;
     label?: string;
     placeholder?: string;
@@ -22,8 +22,12 @@ export const PremiumSelect: React.FC<PremiumSelectProps> = ({ value, options, on
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, []);
 
-    const handleSelect = (provider: string, model: string) => {
-        onChange(`${provider}:${model}`);
+    const handleSelect = (provider: string | null, model: string) => {
+        if (provider) {
+            onChange(`${provider}:${model}`);
+        } else {
+            onChange(model);
+        }
         setIsOpen(false);
     };
 
@@ -34,7 +38,11 @@ export const PremiumSelect: React.FC<PremiumSelectProps> = ({ value, options, on
         return value;
     };
 
-    const hasOptions = Object.values(options).some(list => list.length > 0);
+    const groupedOptions = Array.isArray(options)
+        ? { 'all': options }
+        : options;
+
+    const hasOptions = Object.values(groupedOptions).some(list => list && list.length > 0);
 
     return (
         <div className="premium-select-container" ref={containerRef}>
@@ -52,20 +60,20 @@ export const PremiumSelect: React.FC<PremiumSelectProps> = ({ value, options, on
             {isOpen && (
                 <div className="premium-select-dropdown">
                     {!hasOptions ? (
-                        <div className="premium-select-no-options">No models available</div>
+                        <div className="premium-select-no-options">No options available</div>
                     ) : (
-                        Object.entries(options).map(([provider, models]) => (
-                            models.length > 0 && (
+                        Object.entries(groupedOptions).map(([provider, models]) => (
+                            models && models.length > 0 && (
                                 <div key={provider} className="provider-group">
-                                    <div className="provider-header">{provider.toUpperCase()}</div>
+                                    {provider !== 'all' && <div className="provider-header">{provider.toUpperCase()}</div>}
                                     {models.map((opt) => {
-                                        const fullValue = `${provider}:${opt}`;
+                                        const fullValue = provider !== 'all' ? `${provider}:${opt}` : opt;
                                         const isSelected = value === fullValue || (provider === 'ollama' && value === opt);
                                         return (
                                             <div
                                                 key={opt}
                                                 className={`premium-select-option ${isSelected ? 'selected' : ''}`}
-                                                onClick={() => handleSelect(provider, opt)}
+                                                onClick={() => handleSelect(provider === 'all' ? null : provider, opt)}
                                             >
                                                 <span className="opt-text">{opt}</span>
                                                 {isSelected && <span className="opt-check">✓</span>}

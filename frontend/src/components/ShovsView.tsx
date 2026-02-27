@@ -11,6 +11,10 @@ interface ShovsViewProps {
     currentAgentToken: string;
     lastAgentResponse: string;
     onToggleMic: () => void;
+    voiceSensitivity: number;
+    setVoiceSensitivity: (val: number) => void;
+    voiceModel: string;
+    setVoiceModel: (val: string) => void;
 }
 
 export const ShovsView: React.FC<ShovsViewProps> = ({
@@ -21,7 +25,11 @@ export const ShovsView: React.FC<ShovsViewProps> = ({
     lastUserText,
     currentAgentToken,
     lastAgentResponse,
-    onToggleMic
+    onToggleMic,
+    voiceSensitivity,
+    setVoiceSensitivity,
+    voiceModel,
+    setVoiceModel
 }) => {
     const [flavor, setFlavor] = useState<'nebula' | 'ocean' | 'midnight'>('nebula');
 
@@ -51,6 +59,27 @@ export const ShovsView: React.FC<ShovsViewProps> = ({
                     <button className={flavor === 'nebula' ? 'active' : ''} onClick={() => setFlavor('nebula')}>Nebula</button>
                     <button className={flavor === 'ocean' ? 'active' : ''} onClick={() => setFlavor('ocean')}>Ocean</button>
                     <button className={flavor === 'midnight' ? 'active' : ''} onClick={() => setFlavor('midnight')}>Midnight</button>
+                </div>
+                <div className="shovs-voice-settings">
+                    <div className="setting-item">
+                        <span className="setting-label">Sensitivity</span>
+                        <input
+                            type="range"
+                            min="0" max="1" step="0.05"
+                            value={voiceSensitivity}
+                            onChange={(e) => setVoiceSensitivity(parseFloat(e.target.value))}
+                        />
+                    </div>
+                    <div className="setting-item">
+                        <span className="setting-label">Model</span>
+                        <select value={voiceModel} onChange={(e) => setVoiceModel(e.target.value)}>
+                            <option value="aura-orion-en">Aura Orion (Clean)</option>
+                            <option value="aura-helios-en">Aura Helios (Warm)</option>
+                            <option value="aura-hera-en">Aura Hera (Professional)</option>
+                            <option value="edge:en-US-GuyNeural">Edge Guy (Fast)</option>
+                            <option value="edge:en-GB-SoniaNeural">Edge Sonia (UK)</option>
+                        </select>
+                    </div>
                 </div>
             </nav>
 

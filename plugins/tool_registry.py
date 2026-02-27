@@ -209,7 +209,7 @@ class ToolRegistry:
         return calls
 
 
-    async def execute(self, call: ToolCall) -> ToolResult:
+    async def execute(self, call: ToolCall, context: Optional[dict] = None) -> ToolResult:
         """Execute a tool call and return a ToolResult."""
         tool = self._tools.get(call.tool_name)
         if not tool:
@@ -219,10 +219,22 @@ class ToolRegistry:
                 content=f"Tool '{call.tool_name}' not found.",
             )
         try:
+            # Merge context into arguments (e.g. _session_id)
+            kwargs = {**call.arguments}
+            if context:
+                # Only inject context keys (starting with _) if handler accepts **kwargs or named param
+                import inspect
+                sig = inspect.signature(tool.handler)
+                has_kwargs = any(p.kind == p.VAR_KEYWORD for p in sig.parameters.values())
+                
+                for k, v in context.items():
+                    if has_kwargs or k in sig.parameters:
+                        kwargs[k] = v
+
             if asyncio.iscoroutinefunction(tool.handler):
-                raw = await tool.handler(**call.arguments)
+                raw = await tool.handler(**kwargs)
             else:
-                raw = tool.handler(**call.arguments)
+                raw = tool.handler(**kwargs)
             content = raw if isinstance(raw, str) else json.dumps(raw)
             return ToolResult(tool_name=call.tool_name, success=True, content=content)
         except TypeError as e:

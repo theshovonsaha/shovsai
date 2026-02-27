@@ -217,9 +217,13 @@ class AgentCore:
                 log("llm", sid, f"LLM error: {e}", level="error")
                 yield _ev("error", message=str(e))
                 return
+            except asyncio.TimeoutError:
+                log("llm", sid, "LLM generation timed out after 60s", level="error")
+                yield _ev("error", message="Generation timed out. The model might be overloaded or the connection was lost.")
+                return
             except Exception as e:
-                log("agent", sid, f"Unexpected error: {e}", level="error")
-                yield _ev("error", message=f"Unexpected: {e}")
+                log("agent", sid, f"Unexpected loop error: {e}", level="error")
+                yield _ev("error", message=f"Internal Error: {e}")
                 return
 
         if error_msg:
@@ -248,8 +252,21 @@ class AgentCore:
         yield _ev("compressing")
         try:
             # Decouple: Background compression uses the provided context model layer
-            compression_target = context_model or model or "deepseek-r1:8b"
-            log("ctx", sid, f"Compressing exchange with {compression_target}...")
+            # Fallback logic: Ensure the target model is compatible with the current adapter
+            from llm.adapter_factory import get_default_model
+            default_fallback = get_default_model(current_use_adapter)
+            
+            # Smart Fallback: If context_model is deepseek but adapter is NOT ollama, fallback.
+            adapter_name = current_use_adapter.__class__.__name__.lower()
+            is_cloud = "groq" in adapter_name or "openai" in adapter_name or "gemini" in adapter_name
+            
+            compression_target = context_model or model or default_fallback
+            
+            if is_cloud and "deepseek" in compression_target.lower():
+                # Force fallback for cloud regions to the main model (which we know is cloud-safe)
+                compression_target = model or default_fallback
+            
+            log("ctx", sid, f"Compressing exchange with {compression_target} (adapter: {adapter_name})...")
             updated_ctx, keyed_facts, voids = await self.ctx_eng.compress_exchange(
                 user_message=user_message,
                 assistant_response=clean_response,
@@ -425,9 +442,16 @@ class AgentCore:
                 "messages": messages,  # Full raw context
             })
 
-            async for token in current_adapter.stream(model=model, messages=messages, images=turn_images):
-                turn_buffer += token
-                yield _ev("token", content=token)
+            # Watchdog: ensure the adapter stream doesn't hang forever
+            try:
+                async with asyncio.timeout(60.0): # 60s max per turn
+                    async for token in current_adapter.stream(model=model, messages=messages, images=turn_images):
+                        turn_buffer += token
+                        yield _ev("token", content=token)
+            except asyncio.TimeoutError:
+                log("llm", sid, "Stream watchdog triggered: model stalled", level="error")
+                yield _ev("error", message="LLM Stream stalled. Consider trying a different model or context window.")
+                break
 
             log("llm", sid, f"Turn {tool_turn} complete · {len(turn_buffer)} chars generated", level="ok")
 
@@ -470,7 +494,9 @@ class AgentCore:
                 log("tool", sid, f"Calling {call.tool_name}({args_summary})")
 
                 yield _ev("tool_running", tool_name=call.tool_name)
-                result = await self.tools.execute(call)
+                # Pass context (session_id, agent_id) to tool execution for hierarchy support
+                context = {"_session_id": sid, "_agent_id": agent_id}
+                result = await self.tools.execute(call, context=context)
 
                 if result.success:
                     log("tool", sid, f"{call.tool_name} → {len(result.content)} chars returned", level="ok")

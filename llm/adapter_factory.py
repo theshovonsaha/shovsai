@@ -9,7 +9,7 @@ Priority order (first configured wins):
   3. GROQ_API_KEY set → GroqLLMAdapter
   4. GEMINI_API_KEY set → GeminiAdapter
 
-Override with: LLM_PROVIDER=ollama|openai|groq|gemini
+Override with: LLM_PROVIDER=ollama|openai|groq|gemini|anthropic
 """
 
 import os
@@ -27,7 +27,7 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     if provider:
         if ":" in provider:
             p_part = provider.split(":")[0].lower()
-            if p_part in ["ollama", "openai", "groq", "gemini"]:
+            if p_part in ["ollama", "openai", "groq", "gemini", "anthropic"]:
                 target_provider = p_part
         else:
             target_provider = provider.lower()
@@ -40,6 +40,7 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
         if os.getenv("OPENAI_API_KEY"): final_provider = "openai"
         elif os.getenv("GROQ_API_KEY"): final_provider = "groq"
         elif os.getenv("GEMINI_API_KEY"): final_provider = "gemini"
+        elif os.getenv("ANTHROPIC_API_KEY"): final_provider = "anthropic"
         else: final_provider = "ollama"
 
     # 3. Cache lookup
@@ -56,6 +57,9 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     elif final_provider == "gemini":
         from llm.gemini_adapter import GeminiAdapter
         adapter = GeminiAdapter()
+    elif final_provider == "anthropic":
+        from llm.anthropic_adapter import AnthropicAdapter
+        adapter = AnthropicAdapter()
     else:
         from llm.llm_adapter import OllamaAdapter
         adapter = OllamaAdapter()
@@ -73,7 +77,7 @@ def strip_provider_prefix(model_name: str) -> str:
         return model_name
     
     parts = model_name.split(":", 1)
-    if parts[0].lower() in ["ollama", "openai", "groq", "gemini"]:
+    if parts[0].lower() in ["ollama", "openai", "groq", "gemini", "anthropic"]:
         return parts[1]
     return model_name
 
@@ -94,5 +98,9 @@ def get_default_model(adapter: BaseLLMAdapter) -> str:
     from llm.gemini_adapter import GeminiAdapter
     if isinstance(adapter, GeminiAdapter):
         return os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+    
+    from llm.anthropic_adapter import AnthropicAdapter
+    if isinstance(adapter, AnthropicAdapter):
+        return os.getenv("DEFAULT_MODEL", "claude-3-5-sonnet-latest")
 
     return "llama3.2"
