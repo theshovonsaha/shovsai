@@ -1,6 +1,7 @@
 import asyncio
 import sys
 import os
+import pytest
 
 # Add project root to path
 sys.path.append(os.getcwd())
@@ -8,6 +9,7 @@ sys.path.append(os.getcwd())
 from orchestration.orchestrator import AgenticOrchestrator
 from llm.llm_adapter import OllamaAdapter
 
+@pytest.mark.asyncio
 async def test_orchestration():
     adapter = OllamaAdapter()
     orch = AgenticOrchestrator(adapter)

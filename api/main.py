@@ -303,6 +303,32 @@ async def clear_all_memories():
     graph.clear()
     return {"cleared": before, "message": f"Deleted {before} memories"}
 
+# ── Tool Results Persistence ──────────────────────────────────────────────────
+
+@app.get("/tool-results/{session_id}")
+async def get_tool_results(session_id: str, limit: int = 50):
+    """Retrieve all persisted tool results for a session."""
+    from memory.tool_results_db import ToolResultsDB
+    db = ToolResultsDB()
+    results = db.get_by_session(session_id, limit=limit)
+    return {"session_id": session_id, "results": results, "count": len(results)}
+
+@app.get("/apps")
+async def list_generated_apps(limit: int = 100):
+    """List all generated HTML apps across all sessions."""
+    from memory.tool_results_db import ToolResultsDB
+    db = ToolResultsDB()
+    apps = db.get_all_apps(limit=limit)
+    return {"apps": apps, "count": len(apps)}
+
+@app.get("/apps/{session_id}")
+async def get_session_apps(session_id: str):
+    """Get generated apps for a specific session."""
+    from memory.tool_results_db import ToolResultsDB
+    db = ToolResultsDB()
+    apps = db.get_apps_by_session(session_id)
+    return {"session_id": session_id, "apps": apps, "count": len(apps)}
+
 # ── Agent Management ──────────────────────────────────────────────────────────
 
 @app.get("/agents")

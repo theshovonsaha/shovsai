@@ -14,7 +14,7 @@ Changes vs v1:
 """
 
 import re
-from llm.llm_adapter import OllamaAdapter
+from llm.base_adapter import BaseLLMAdapter
 
 
 COMPRESSION_PROMPT = """\
@@ -80,11 +80,15 @@ class ContextEngine:
 
     def __init__(
         self,
-        adapter: OllamaAdapter,
-        compression_model: str = "llama3.2",  # Default handled by adapter or config
+        adapter: BaseLLMAdapter,
+        compression_model: str = "llama3.2",
     ):
         self.adapter           = adapter
         self.compression_model = compression_model
+
+    def set_adapter(self, adapter: BaseLLMAdapter):
+        """Hot-swap the underlying LLM adapter (called when user switches providers)."""
+        self.adapter = adapter
 
     def is_trivial(self, user_message: str, assistant_response: str) -> bool:
         return (

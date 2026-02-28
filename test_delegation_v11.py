@@ -23,10 +23,10 @@ async def test_delegation():
     print("🚀 Starting V11 Delegation Test (using Groq)...")
     
     # 1. Setup Infrastructure
-    adapter = create_adapter("groq")
-    # Use the highly stable Groq model
-    test_model = "llama-3.1-8b-instant"
-    print(f"Using Groq adapter with model: {test_model}")
+    adapter = create_adapter("ollama")
+    # Use a local model
+    test_model = "llama3.2"
+    print(f"Using Ollama adapter with model: {test_model}")
     
     registry = ToolRegistry()
     session_mgr = SessionManager(max_sessions=10)
@@ -96,7 +96,7 @@ async def test_delegation():
     async for event in mother_agent.chat_stream(query, session_id="test_mother_session"):
         etype = event.get("type")
         if etype == "token":
-            t = event.get("text", "")
+            t = event.get("content", "")
             print(t, end="", flush=True)
             full_response += t
         elif etype == "plan":

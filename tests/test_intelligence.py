@@ -92,8 +92,9 @@ async def test_model_override_updates_session():
     session_mgr.update_context = MagicMock()
     
     ctx_eng = MagicMock()
-    ctx_eng.compress_exchange = AsyncMock(return_value=("- test context", []))
+    ctx_eng.compress_exchange = AsyncMock(return_value=("- test context", [], []))
     ctx_eng.build_context_block.return_value = ""
+    ctx_eng.set_adapter = MagicMock()  # New: hot-swap support
     
     tools = MagicMock()
     tools.has_tools.return_value = False

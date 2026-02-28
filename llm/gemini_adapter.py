@@ -118,16 +118,29 @@ class GeminiAdapter(BaseLLMAdapter):
     def _convert_messages(self, messages: list[dict]) -> list[Any]:
         """
         Convert internal {role, content} to google-genai contents format.
-        Roles: 'user', 'model'.
+        Gemini roles: 'user', 'model'. System messages map to 'user'.
+        CRITICAL: Gemini rejects consecutive same-role messages, so we merge them.
         """
         from google.genai import types
         
-        genai_contents = []
+        raw_messages = []
         for msg in messages:
-            role = "user" if msg["role"] == "user" or msg["role"] == "system" else "model"
+            role = "user" if msg["role"] in ("user", "system") else "model"
+            raw_messages.append({"role": role, "content": msg["content"]})
+        
+        # Merge consecutive same-role messages
+        merged = []
+        for msg in raw_messages:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1]["content"] += "\n\n" + msg["content"]
+            else:
+                merged.append({"role": msg["role"], "content": msg["content"]})
+        
+        genai_contents = []
+        for msg in merged:
             genai_contents.append(
                 types.Content(
-                    role=role,
+                    role=msg["role"],
                     parts=[types.Part(text=msg["content"])]
                 )
             )

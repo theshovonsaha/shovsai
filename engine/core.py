@@ -41,14 +41,17 @@ def _trace(agent_id: str, session_id: str, event_type: str, data: dict):
         pass  # Never crash on trace failure
 
 DEFAULT_SYSTEM_PROMPT = """\
-You are a highly advanced AI agent running on the [Antigravity Agent Platform].
+You are a highly advanced AI agent running on the [Shovs Agent Platform].
 
-V8 Platinum Directives:
-- PROMPT ADHERENCE: Prioritize "Historical Context" and "Session Memory" for persona and tone. If a specific persona (e.g. "Tony Stark") is detected in memory, adopt it fully.
-- DISCOVERY: Use `query_memory` early to re-discover user preferences.
+Core Directives:
+- CONTEXT: Prioritize "Historical Context" and "Session Memory" for persona consistency. If a specific persona is detected in memory, adopt it fully.
+- MEMORY: Use `query_memory` early to re-discover user preferences and past interactions.
 - VISUALS: Wrap visual data in ```html or ```svg blocks for the Live View.
-- TOOLS: Output ONLY JSON calls: {"tool": "<n>", "arguments": {<args>}}. Multiple tools are allowed.
+- TOOLS: To use a tool, output ONLY the JSON call: {"tool": "<name>", "arguments": {<args>}}. You may chain multiple tool calls.
+- ACCURACY: Never fabricate tool results. If a tool fails, explain the limitation.
+- DELEGATION: Use `delegate_to_agent` when a task is better handled by a specialized agent.
 """
+
 
 MAX_TOOL_TURNS = 6
 
@@ -140,6 +143,13 @@ class AgentCore:
             
             # Use clean model name for API calls
             clean_model = strip_provider_prefix(resolved_model)
+            
+            # ── CRITICAL: Propagate dynamic adapter to subsystems ─────────
+            # Without this, ContextEngine and Orchestrator remain stuck on 
+            # the original OllamaAdapter even when user selects Groq/Claude/Gemini.
+            self.ctx_eng.set_adapter(current_use_adapter)
+            if self.orch:
+                self.orch.set_adapter(current_use_adapter)
             
             # ── Vector RAG ────────────────────────────────────────────────────
             ve = VectorEngine(sid, agent_id=session.agent_id, model=self.embed_model)
@@ -258,7 +268,7 @@ class AgentCore:
             
             # Smart Fallback: If context_model is deepseek but adapter is NOT ollama, fallback.
             adapter_name = current_use_adapter.__class__.__name__.lower()
-            is_cloud = "groq" in adapter_name or "openai" in adapter_name or "gemini" in adapter_name
+            is_cloud = any(p in adapter_name for p in ["groq", "openai", "gemini", "anthropic"])
             
             compression_target = context_model or model or default_fallback
             
@@ -315,17 +325,19 @@ class AgentCore:
         """Remove tool-call JSON from response text before storing. Upgraded for V10 logic."""
         if not text: return ""
         
-        # 1. Aggressive regex for standard and slightly malformed tool calls
-        # This catches things like: {"tool": "...", "arguments": {...}} 
-        # but also: {"tool": "..."} without arguments or with trailing semi-colons
-        pattern = r'\{\s*"tool"\s*:\s*"[^"]+".*?\}'
-        cleaned = re.sub(pattern, '', text, flags=re.DOTALL)
+        # Use the same brace-counting scanner from ToolRegistry to find all JSON objects
+        # This handles nested braces correctly (which regex can't)
+        from plugins.tool_registry import _extract_json_objects
+        candidates = _extract_json_objects(text)
         
-        # 2. Cleanup artifacts left by multiple stripped blocks
-        cleaned = re.sub(r'[\n\s;]+', ' ', cleaned).strip()
+        # Remove any JSON block that looks like a tool call
+        cleaned = text
+        for obj, raw_str in candidates:
+            if "tool" in obj and "arguments" in obj:
+                cleaned = cleaned.replace(raw_str, "")
         
-        # 3. If cleaning stripped everything but the text was a JSON block, return empty
-        # otherwise return the cleaned prose
+        # Cleanup whitespace artifacts
+        cleaned = re.sub(r'\n{3,}', '\n\n', cleaned).strip()
         return cleaned
 
     @staticmethod
@@ -443,11 +455,21 @@ class AgentCore:
             })
 
             # Watchdog: ensure the adapter stream doesn't hang forever
+            # Python 3.10 compatible — asyncio.timeout() requires 3.11+
             try:
-                async with asyncio.timeout(60.0): # 60s max per turn
-                    async for token in current_adapter.stream(model=model, messages=messages, images=turn_images):
-                        turn_buffer += token
-                        yield _ev("token", content=token)
+                stream_coro = current_adapter.stream(model=model, messages=messages, images=turn_images)
+                token_buffer = []
+                
+                async def _consume_stream():
+                    async for token in stream_coro:
+                        token_buffer.append(token)
+                
+                await asyncio.wait_for(_consume_stream(), timeout=60.0)
+                
+                for token in token_buffer:
+                    turn_buffer += token
+                    yield _ev("token", content=token)
+                    
             except asyncio.TimeoutError:
                 log("llm", sid, "Stream watchdog triggered: model stalled", level="error")
                 yield _ev("error", message="LLM Stream stalled. Consider trying a different model or context window.")
@@ -517,6 +539,32 @@ class AgentCore:
                     )
 
                 yield _ev("tool_result", tool_name=call.tool_name, success=result.success, content=result.content)
+
+                # ── Persist tool result to dedicated DB ───────────────────
+                try:
+                    from memory.tool_results_db import ToolResultsDB
+                    result_type = "text"
+                    if call.tool_name == "generate_app":
+                        result_type = "app_view"
+                    elif call.tool_name in ("web_search", "image_search"):
+                        result_type = "search"
+                    elif call.tool_name in ("file_create", "file_view", "file_str_replace"):
+                        result_type = "file_op"
+                    elif call.tool_name == "bash":
+                        result_type = "bash"
+                    
+                    ToolResultsDB().store(
+                        session_id=sid,
+                        tool_name=call.tool_name,
+                        arguments=call.arguments,
+                        result=result.content[:10000],  # Cap at 10KB per result
+                        success=result.success,
+                        result_type=result_type,
+                        agent_id=agent_id,
+                    )
+                except Exception as e:
+                    log("tool", sid, f"Failed to persist tool result: {e}", level="error")
+
                 
                 # Assemble the XML result block for this specific tool call
                 combined_results.append(

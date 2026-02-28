@@ -24,9 +24,11 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-MAX_SESSIONS        = 200
-SLIDING_WINDOW_SIZE = 8   # optimized for modern cloud limits (4 turns)
-DB_PATH             = "sessions.db"
+from config.config import cfg
+
+MAX_SESSIONS        = cfg.MAX_SESSIONS
+SLIDING_WINDOW_SIZE = cfg.SLIDING_WINDOW_SIZE  # Centralized — no more mismatch
+DB_PATH             = cfg.SESSIONS_DB
 
 
 @dataclass

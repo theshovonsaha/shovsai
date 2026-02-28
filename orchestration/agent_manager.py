@@ -10,7 +10,7 @@ from engine.core import AgentCore
 from plugins.tool_registry import ToolRegistry, Tool
 from orchestration.session_manager import SessionManager
 from engine.context_engine import ContextEngine
-from llm.llm_adapter import OllamaAdapter
+from llm.base_adapter import BaseLLMAdapter
 from orchestration.orchestrator import AgenticOrchestrator
 
 class AgentManager:
@@ -19,7 +19,7 @@ class AgentManager:
         profiles:        ProfileManager,
         sessions:        SessionManager,
         context_engine:  ContextEngine,
-        adapter:         OllamaAdapter,
+        adapter:         BaseLLMAdapter,
         global_registry: ToolRegistry,
         orchestrator:    Optional[AgenticOrchestrator] = None,
     ):
@@ -97,9 +97,10 @@ class AgentManager:
         
         async for event in agent.chat_stream(user_message=task, session_id=child_sid):
             if event["type"] == "token":
-                full_response += event["text"]
+                full_response += event.get("content", "")
             elif event["type"] == "error":
-                return f"Error from agent '{agent_id}': {event['text']}"
+                err_msg = event.get("message", event.get("text", "Unknown error"))
+                return f"Error from agent '{agent_id}': {err_msg}"
         
         return full_response.strip()
 

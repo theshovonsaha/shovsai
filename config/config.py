@@ -32,9 +32,10 @@ class Config:
     GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
 
     # ── Memory ────────────────────────────────────────────────────────────
-    SLIDING_WINDOW_SIZE: int = int(os.getenv("SLIDING_WINDOW_SIZE", "20"))
+    SLIDING_WINDOW_SIZE: int = int(os.getenv("SLIDING_WINDOW_SIZE", "20"))  # 10 full exchanges
     MAX_CONTEXT_LINES: int = int(os.getenv("MAX_CONTEXT_LINES", "80"))
     MAX_SESSIONS: int = int(os.getenv("MAX_SESSIONS", "200"))
 

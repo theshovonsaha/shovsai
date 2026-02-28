@@ -44,6 +44,7 @@ class GroqLLMAdapter(BaseLLMAdapter):
             "model": model,
             "messages": messages,
             "temperature": temperature,
+            "tool_choice": "none",  # Suppress native tool calling — we parse tools from text
         }
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
@@ -74,6 +75,7 @@ class GroqLLMAdapter(BaseLLMAdapter):
             "messages": messages,
             "temperature": temperature,
             "stream": True,
+            "tool_choice": "none",  # Suppress native tool calling — we parse tools from text
         }
         if max_tokens:
             kwargs["max_tokens"] = max_tokens

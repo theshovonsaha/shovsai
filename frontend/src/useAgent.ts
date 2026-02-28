@@ -63,6 +63,11 @@ export function useAgent() {
     const [voiceSensitivity, setVoiceSensitivity] = useState<number>(Number(localStorage.getItem('shovs_voice_sensitivity')) || 0.5);
     const [voiceModel, setVoiceModel] = useState<string>(localStorage.getItem('shovs_voice_model') || 'aura-orion-en');
 
+    // Granular Agentic Visibility Controls
+    const [showPlannerLog, setShowPlannerLog] = useState<boolean>(localStorage.getItem('shovs_show_planner') !== 'false');
+    const [showActorThought, setShowActorThought] = useState<boolean>(localStorage.getItem('shovs_show_actor') !== 'false');
+    const [showObserverActivity, setShowObserverActivity] = useState<boolean>(localStorage.getItem('shovs_show_observer') === 'true');
+
     const wsRef = useRef<WebSocket | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -97,6 +102,18 @@ export function useAgent() {
     useEffect(() => {
         localStorage.setItem('shovs_context_model', contextModel);
     }, [contextModel]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_show_planner', showPlannerLog.toString());
+    }, [showPlannerLog]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_show_actor', showActorThought.toString());
+    }, [showActorThought]);
+
+    useEffect(() => {
+        localStorage.setItem('shovs_show_observer', showObserverActivity.toString());
+    }, [showObserverActivity]);
 
     useEffect(() => {
         localStorage.setItem('shovs_voice_sensitivity', voiceSensitivity.toString());
@@ -175,12 +192,54 @@ export function useAgent() {
             const data = await fetch(`/api/sessions/${id}`).then(r => r.json());
             setCurrentSessionId(id);
             if (data.model) setCurrentModel(data.model);
-            const loaded: Message[] = (data.history || []).map((m: any, i: number) => ({
-                id: `hist-${i}`,
-                role: m.role,
-                content: m.content,
-                blocks: [{ id: `b-${i}`, type: 'text' as const, content: m.content }],
-            }));
+            const loaded: Message[] = (data.history || []).map((m: any, i: number) => {
+                let blocks: MessageBlock[] = [];
+                let content = m.content || '';
+
+                if (m.role === 'assistant' && content.includes('<SYSTEM_TOOL_RESULT')) {
+                    // Extract tool results explicitly
+                    const parts = content.split(/<SYSTEM_TOOL_RESULT name="([^"]+)">/);
+                    if (parts[0].trim()) {
+                        blocks.push({ id: `b-${i}-txt`, type: 'text', content: parts[0].trim() });
+                    }
+                    for (let j = 1; j < parts.length; j += 2) {
+                        const toolName = parts[j];
+                        let toolContent = parts[j + 1] || '';
+                        const closeIdx = toolContent.indexOf('</SYSTEM_TOOL_RESULT>');
+                        if (closeIdx !== -1) {
+                            const actualContent = toolContent.slice(0, closeIdx).trim();
+                            blocks.push({
+                                id: `b-${i}-t${j}`,
+                                type: 'tool_result',
+                                tool: toolName,
+                                content: actualContent
+                            });
+                            const remainder = toolContent.slice(closeIdx + '</SYSTEM_TOOL_RESULT>'.length).trim();
+                            if (remainder) {
+                                blocks.push({ id: `b-${i}-rem${j}`, type: 'text', content: remainder });
+                            }
+                        }
+                    }
+                } else if (m.role === 'assistant' && content.includes('<think>')) {
+                    // Reconstruct thought blocks
+                    const parts = content.split('<think>');
+                    if (parts[0].trim()) blocks.push({ id: `b-${i}-t1`, type: 'text', content: parts[0].trim() });
+                    if (parts[1]) {
+                        const tp = parts[1].split('</think>');
+                        blocks.push({ id: `b-${i}-th`, type: 'thought', content: tp[0].trim() });
+                        if (tp[1]?.trim()) blocks.push({ id: `b-${i}-t2`, type: 'text', content: tp[1].trim() });
+                    }
+                } else {
+                    blocks = [{ id: `b-${i}`, type: 'text' as const, content }];
+                }
+
+                return {
+                    id: `hist-${i}`,
+                    role: m.role,
+                    content,
+                    blocks,
+                };
+            });
             setMessages(loaded);
             setContextLines(data.context_lines || 0);
             fetchSessions();
@@ -612,7 +671,14 @@ export function useAgent() {
         plannerModel, setPlannerModel,
         contextModel, setContextModel,
         voiceSensitivity, setVoiceSensitivity,
-        voiceModel, setVoiceModel,
+        voiceModel,
+        setVoiceModel,
+        showPlannerLog,
+        setShowPlannerLog,
+        showActorThought,
+        setShowActorThought,
+        showObserverActivity,
+        setShowObserverActivity,
         clearSessionContext,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,

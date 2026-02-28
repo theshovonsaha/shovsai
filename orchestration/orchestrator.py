@@ -1,26 +1,38 @@
 import json
+import re
 from typing import List, Dict
 from llm.base_adapter import BaseLLMAdapter
-from config.logger          import log
+from config.logger import log
 
 PLANNING_PROMPT = """\
-You are the [Antigravity Orchestrator]. Your job is to analyze a user query and determine which tools (if any) are absolutely necessary to resolve it efficiently.
+You are the [Shovs Orchestrator]. Analyze the user query and decide which tools are needed.
 
 Available Tools:
 {tools_docs}
 
-Guidelines:
-- If the query is simple prose (e.g. "hi", "how are you"), return an empty list.
-- If the query requires factual lookup, use 'web_search'.
-- If the query involves creating or modifying files, use 'file_create' or 'file_str_replace'.
-- If the query involves images, use 'image_search'.
-- return ONLY a JSON list of tool names. Example: ["web_search", "file_create"]
+Rules:
+- Conversational queries ("hi", "how are you", opinions) → return []
+- Factual/current data → ["web_search"]
+- URL reading → ["web_fetch"]
+- File creation/editing → ["file_create"] or ["file_str_replace"]
+- Image lookup → ["image_search"]
+- Weather → ["weather_fetch"]
+- Multi-step tasks → list all required tools in execution order
+- Memory recall → ["query_memory"]
+- Delegation → ["delegate_to_agent"]
+
+Return ONLY a JSON array of tool name strings. No explanation.
+Example: ["web_search", "web_fetch"]
 
 User Query: "{query}"
 """
 
 class AgenticOrchestrator:
     def __init__(self, adapter: BaseLLMAdapter):
+        self.adapter = adapter
+
+    def set_adapter(self, adapter: BaseLLMAdapter):
+        """Hot-swap the underlying adapter when user switches providers."""
         self.adapter = adapter
 
     async def plan(self, query: str, tools_list: List[Dict], model: str = "llama3.1:8b") -> List[str]:
@@ -51,4 +63,3 @@ class AgenticOrchestrator:
             log("orch", "plan", f"Orchestrator failed: {e}", level="error")
             return []
 
-import re # needed for search

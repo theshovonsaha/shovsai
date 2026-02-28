@@ -8,6 +8,27 @@ import { PremiumSelect } from './components/PremiumSelect';
 import { ShovsView } from './components/ShovsView';
 import { OptionsPanel } from './components/OptionsPanel';
 
+const AppViewer = ({ title, path }: { title: string, path: string }) => {
+  return (
+    <div className="v8-app-viewer" style={{
+      width: '100%', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginTop: '12px', background: '#000'
+    }}>
+      <div className="v8-app-header" style={{
+        padding: '8px 16px', background: '#111', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-dim)'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ color: 'var(--primary)' }}>◈</span>
+          <span style={{ fontWeight: 600, color: 'var(--text)' }}>{title}</span>
+        </div>
+        <div>
+          <a href={path} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none' }}>open full ↗</a>
+        </div>
+      </div>
+      <iframe src={path} style={{ width: '100%', height: '500px', border: 'none', display: 'block' }} title={title} />
+    </div>
+  );
+};
+
 const ToolEvent = ({ type, tool, content }: { type: 'call' | 'result' | 'error'; tool: string; content?: string }) => {
   const [expanded, setExpanded] = React.useState(false);
 
@@ -21,8 +42,9 @@ const ToolEvent = ({ type, tool, content }: { type: 'call' | 'result' | 'error';
         label = `Found ${data.results.length} results`;
       } else if (data.type === 'web_fetch_result') {
         label = data.error ? 'Fetch Failed' : `Fetched ${data.total_length || 0} chars`;
-      } else if (data.status === 'success' && (data.path || data.type === 'app_view')) {
-        label = `View ${data.title || 'App'}`;
+      } else if (data.status === 'success' && data.type === 'app_view') {
+        // App view special rendering
+        return <AppViewer title={data.title} path={data.path} />;
       }
     } catch (e) {
       // Fallback
@@ -246,6 +268,12 @@ function App() {
             contextModel={agent.contextModel}
             setContextModel={agent.setContextModel}
             clearSessionContext={agent.clearSessionContext}
+            showPlannerLog={agent.showPlannerLog}
+            setShowPlannerLog={agent.setShowPlannerLog}
+            showActorThought={agent.showActorThought}
+            setShowActorThought={agent.setShowActorThought}
+            showObserverActivity={agent.showObserverActivity}
+            setShowObserverActivity={agent.setShowObserverActivity}
           />
         )}
       </aside>
@@ -285,9 +313,9 @@ function App() {
                     case 'text':
                       return <RichContentViewer key={block.id} content={block.content} />;
                     case 'thought':
-                      return <ThoughtBlock key={block.id} content={block.content} />;
+                      return agent.showActorThought ? <ThoughtBlock key={block.id} content={block.content} /> : null;
                     case 'plan':
-                      return <PlanBlock key={block.id} content={block.content} />;
+                      return agent.showPlannerLog ? <PlanBlock key={block.id} content={block.content} /> : null;
                     case 'tool_call':
                       return <ToolEvent key={block.id} type="call" tool={block.tool || 'unknown'} content={block.content || ''} />;
                     case 'tool_result':

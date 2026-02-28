@@ -2,12 +2,14 @@ import asyncio
 import sys
 import os
 import json
+import pytest
 
 # Add project root to path
 sys.path.append(os.getcwd())
 
 from plugins.tools import _pdf_processor
 
+@pytest.mark.asyncio
 async def test_pdf_tool():
     print("Testing PDF Processor Tool...")
     

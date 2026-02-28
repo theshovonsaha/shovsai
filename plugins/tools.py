@@ -39,6 +39,7 @@ from typing import Optional
 import httpx
 
 from plugins.tool_registry import Tool, ToolRegistry
+from config.logger import log
 
 
 # ─── Config ───────────────────────────────────────────────────────────────────

@@ -115,20 +115,37 @@ class AnthropicAdapter(BaseLLMAdapter):
         Convert to Anthropic format:
         1. Separate system message (passed as 'system' param).
         2. Format user/assistant turns.
-        3. Handle images if present.
+        3. Merge consecutive same-role messages (Anthropic requires strict alternation).
+        4. Handle images if present.
         """
         system_prompt = None
-        msgs = []
+        raw_msgs = []
         
         for m in messages:
             if m["role"] == "system":
-                system_prompt = m["content"]
+                # Anthropic takes system as a separate param, not a message
+                if system_prompt:
+                    system_prompt += "\n\n" + m["content"]
+                else:
+                    system_prompt = m["content"]
             else:
-                msgs.append({"role": m["role"], "content": m["content"]})
+                raw_msgs.append({"role": m["role"], "content": m["content"]})
+        
+        # Merge consecutive same-role messages (Anthropic rejects them)
+        merged = []
+        for msg in raw_msgs:
+            if merged and merged[-1]["role"] == msg["role"]:
+                merged[-1]["content"] += "\n\n" + msg["content"]
+            else:
+                merged.append({"role": msg["role"], "content": msg["content"]})
+        
+        # Ensure first message is always 'user' (Anthropic requirement)
+        if merged and merged[0]["role"] != "user":
+            merged.insert(0, {"role": "user", "content": "[Continue from previous context]"})
         
         if images:
             # Handle vision (only on the latest user message for now)
-            for msg in reversed(msgs):
+            for msg in reversed(merged):
                 if msg["role"] == "user":
                     content_parts = [{"type": "text", "text": msg["content"]}]
                     for img_b64 in images:
@@ -143,4 +160,4 @@ class AnthropicAdapter(BaseLLMAdapter):
                     msg["content"] = content_parts
                     break
                     
-        return msgs, system_prompt
+        return merged, system_prompt

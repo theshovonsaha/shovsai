@@ -23,6 +23,12 @@ interface OptionsPanelProps {
     contextModel: string;
     setContextModel: (val: string) => void;
     clearSessionContext: () => void;
+    showPlannerLog: boolean;
+    setShowPlannerLog: (val: boolean) => void;
+    showActorThought: boolean;
+    setShowActorThought: (val: boolean) => void;
+    showObserverActivity: boolean;
+    setShowObserverActivity: (val: boolean) => void;
 }
 
 export const OptionsPanel: React.FC<OptionsPanelProps> = ({
@@ -37,7 +43,13 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
     setPlannerModel,
     contextModel,
     setContextModel,
-    clearSessionContext
+    clearSessionContext,
+    showPlannerLog,
+    setShowPlannerLog,
+    showActorThought,
+    setShowActorThought,
+    showObserverActivity,
+    setShowObserverActivity
 }) => {
     const [memories, setMemories] = useState<Memory[]>([]);
     const [total, setTotal] = useState(0);
@@ -224,6 +236,33 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
                             ))}
                         </select>
                         <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>The model used for background memory compression and fact extraction (Default: DeepSeek R1).</p>
+                    </div>
+                    <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Granular Agentic Visibility</label>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                            <span style={{ fontSize: '13px', color: 'var(--text)' }}>Show Planner Strategy</span>
+                            <label className="switch" style={{ width: '34px', height: '20px' }}>
+                                <input type="checkbox" checked={showPlannerLog} onChange={e => setShowPlannerLog(e.target.checked)} />
+                                <span className="slider round"></span>
+                            </label>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+                            <span style={{ fontSize: '13px', color: 'var(--text)' }}>Show Actor Thoughts (Reasoning)</span>
+                            <label className="switch" style={{ width: '34px', height: '20px' }}>
+                                <input type="checkbox" checked={showActorThought} onChange={e => setShowActorThought(e.target.checked)} />
+                                <span className="slider round"></span>
+                            </label>
+                        </div>
+
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', opacity: 0.6 }}>
+                            <span style={{ fontSize: '13px', color: 'var(--text)' }}>Show Observer Activity <span style={{ fontSize: '10px', color: 'var(--text-dim)' }}>(soon)</span></span>
+                            <label className="switch" style={{ width: '34px', height: '20px' }}>
+                                <input type="checkbox" checked={showObserverActivity} onChange={e => setShowObserverActivity(e.target.checked)} />
+                                <span className="slider round"></span>
+                            </label>
+                        </div>
                     </div>
 
                     <div className="settings-card" style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
