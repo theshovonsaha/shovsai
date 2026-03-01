@@ -18,8 +18,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [agentToDelete, setAgentToDelete] = useState<AgentProfile | null>(null);
     const [loading, setLoading] = useState(true);
+    const [availableModels, setAvailableModels] = useState<Record<string, string[]>>({});
+    const [savingModel, setSavingModel] = useState<string | null>(null); // agent id being saved
 
-    useEffect(() => { fetchAgents(); }, []);
+    useEffect(() => {
+        fetchAgents();
+        // Load available models for the inline selectors
+        fetch('/api/models').then(r => r.json()).then(d => {
+            if (d.models) setAvailableModels(d.models);
+        }).catch(() => { });
+    }, []);
 
     const fetchAgents = async () => {
         try {
@@ -27,6 +35,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
             setAgents(data.agents || []);
         } catch (e) { console.error('Failed to fetch agents:', e); }
         finally { setLoading(false); }
+    };
+
+    const handleModelChange = async (agentId: string, newModel: string) => {
+        // Optimistically update UI
+        setAgents(prev => prev.map(a => a.id === agentId ? { ...a, model: newModel } : a));
+        setSavingModel(agentId);
+        try {
+            await fetch(`/api/agents/${agentId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: newModel }),
+            });
+        } catch (e) {
+            console.error('Failed to update agent model:', e);
+            fetchAgents(); // revert on error
+        } finally {
+            setSavingModel(null);
+        }
     };
 
     const confirmDelete = async () => {
@@ -80,8 +106,58 @@ export const Dashboard: React.FC<DashboardProps> = ({ onSelectAgent }) => {
                             <div className="agent-avatar">{agent.name.charAt(0).toUpperCase()}</div>
                             <h3>{agent.name}</h3>
                             <p>{agent.description || 'No description.'}</p>
+
+                            {/* ── Per-Agent Model Selector ── */}
+                            <div className="agent-model-selector" style={{ margin: '10px 0' }}>
+                                <label style={{
+                                    display: 'block',
+                                    fontSize: '10px',
+                                    letterSpacing: '.12em',
+                                    color: 'var(--text-dim)',
+                                    marginBottom: '5px',
+                                    textTransform: 'uppercase',
+                                }}>
+                                    {savingModel === agent.id ? '⟳ saving…' : 'Model'}
+                                </label>
+                                <select
+                                    value={agent.model}
+                                    onChange={e => handleModelChange(agent.id, e.target.value)}
+                                    disabled={savingModel === agent.id}
+                                    style={{
+                                        width: '100%',
+                                        padding: '6px 8px',
+                                        borderRadius: '6px',
+                                        border: '1px solid var(--border)',
+                                        background: 'var(--bg-pane, #111)',
+                                        color: 'var(--text)',
+                                        fontSize: '11px',
+                                        outline: 'none',
+                                        cursor: 'pointer',
+                                        opacity: savingModel === agent.id ? 0.6 : 1,
+                                        transition: 'border-color 0.15s',
+                                    }}
+                                    onFocus={e => (e.target.style.borderColor = 'var(--primary, #00d1ff)')}
+                                    onBlur={e => (e.target.style.borderColor = 'var(--border)')}
+                                >
+                                    {/* Current model always visible even if not in list yet */}
+                                    {!Object.values(availableModels).flat().includes(agent.model) && (
+                                        <option value={agent.model}>{agent.model}</option>
+                                    )}
+                                    {Object.entries(availableModels).map(([provider, names]) => (
+                                        names.length > 0 && (
+                                            <optgroup key={provider} label={provider.toUpperCase()}>
+                                                {names.map(name => (
+                                                    <option key={name} value={`${provider}:${name}`}>
+                                                        {name}
+                                                    </option>
+                                                ))}
+                                            </optgroup>
+                                        )
+                                    ))}
+                                </select>
+                            </div>
+
                             <div className="agent-meta">
-                                <span>{agent.model}</span>
                                 <span>{agent.tools.length} tools</span>
                             </div>
                             <div className="agent-actions">

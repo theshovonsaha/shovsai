@@ -33,6 +33,9 @@ from config.logger import get_logger, log
 from api.log_routes import setup_log_routes
 from api.voice_endpoint import setup_voice_routes
 
+from guardrails import GuardrailMiddleware
+from guardrails.api_routes import make_guardrail_router
+
 # ── Config ────────────────────────────────────────────────────────────────────
 FALLBACK_CHAT_MODEL = "llama3.2"
 
@@ -46,13 +49,21 @@ file_processor  = FileProcessor()
 profile_manager = ProfileManager()
 orchestrator    = AgenticOrchestrator(adapter=adapter)
 
+# ── Guardrails ──────────────────────────────────────────────────────────────
+guardrail_middleware = GuardrailMiddleware(
+    registry=tool_registry,
+    require_confirmation_for="confirm_and_above",
+    log_path="./logs/tool_audit.jsonl"
+)
+
 agent_manager   = AgentManager(
     profiles=profile_manager,
     sessions=session_manager,
     context_engine=context_engine,
     adapter=adapter,
     global_registry=tool_registry,
-    orchestrator=orchestrator
+    orchestrator=orchestrator,
+    guardrail_middleware=guardrail_middleware
 )
 
 # Register tools with manager for delegation
@@ -63,6 +74,7 @@ register_web_tools(tool_registry)
 app = FastAPI(title="shovs", version="0.5.0")
 setup_log_routes(app)
 setup_voice_routes(app, agent_manager)
+app.include_router(make_guardrail_router(guardrail_middleware), prefix="/guardrails")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── Static Sandbox Shell ──────────────────────────────────────────────────────
@@ -167,7 +179,7 @@ async def chat_stream(
     force_memory:   Optional[bool]  = Form(False),
     use_planner:    Optional[bool]  = Form(True),
     planner_model:  Optional[str]   = Form(None),
-    context_model:  Optional[str]   = Form("deepseek-r1:8b"),
+    context_model:  Optional[str]   = Form(None),
     forced_tools_json: Optional[str] = Form(None),
     files:         List[UploadFile] = File(default=[]),
 ):
@@ -343,6 +355,21 @@ async def create_agent(profile: AgentProfile):
 async def get_agent(agent_id: str):
     p = profile_manager.get(agent_id)
     if not p: raise HTTPException(404, "Agent not found")
+    return p
+
+@app.patch("/agents/{agent_id}")
+async def update_agent(agent_id: str, payload: dict):
+    """Partially update an agent profile (e.g. change model, tools, name)."""
+    p = profile_manager.get(agent_id)
+    if not p: raise HTTPException(404, "Agent not found")
+    allowed = {"name", "description", "model", "embed_model", "system_prompt", "tools", "avatar_url"}
+    for key, val in payload.items():
+        if key in allowed:
+            setattr(p, key, val)
+    from datetime import datetime, timezone
+    p.updated_at = datetime.now(timezone.utc).isoformat()
+    profile_manager.create(p)           # INSERT OR REPLACE
+    agent_manager.invalidate_cache(agent_id)  # Force re-instantiation with new model
     return p
 
 @app.delete("/agents/{agent_id}")

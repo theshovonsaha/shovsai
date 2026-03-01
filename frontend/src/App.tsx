@@ -7,6 +7,7 @@ import { VoiceControl } from './components/VoiceControl';
 import { PremiumSelect } from './components/PremiumSelect';
 import { ShovsView } from './components/ShovsView';
 import { OptionsPanel } from './components/OptionsPanel';
+import { GuardrailConfirmationModal } from './components/GuardrailConfirmationModal';
 
 const AppViewer = ({ title, path }: { title: string, path: string }) => {
   return (
@@ -456,6 +457,15 @@ function App() {
           />
         )
       }
+
+      {/* Guardrail Confirmation Modal */}
+      {agent.pendingConfirmation && (
+        <GuardrailConfirmationModal
+          confirmation={agent.pendingConfirmation}
+          onApprove={agent.approveConfirmation}
+          onDeny={agent.denyConfirmation}
+        />
+      )}
     </div >
   );
 }

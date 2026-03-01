@@ -409,6 +409,7 @@ async def _bash(command: str, timeout: int = BASH_TIMEOUT, workdir: Optional[str
     - Blocks known destructive patterns
     - Enforces timeout
     - Working directory restricted to SANDBOX_DIR unless overridden
+    - BUG FIX: subprocess now inherits venv PATH so python/pip use the project venv
     """
     if _BLOCKED_COMMANDS.search(command):
         return "bash: command blocked by safety policy"
@@ -418,13 +419,21 @@ async def _bash(command: str, timeout: int = BASH_TIMEOUT, workdir: Optional[str
     if not str(cwd).startswith(str(SANDBOX_DIR)):
         cwd = SANDBOX_DIR
 
+    # Build subprocess environment — inject venv PATH so `python`/`pip` use the project venv
+    bash_env = {**os.environ, "HOME": str(SANDBOX_DIR)}
+    venv_dir = Path(os.getenv("VIRTUAL_ENV", ""))
+    if venv_dir.exists():
+        venv_bin = str(venv_dir / "bin")
+        bash_env["PATH"] = venv_bin + ":" + bash_env.get("PATH", "")
+        bash_env["VIRTUAL_ENV"] = str(venv_dir)
+
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             cwd=str(cwd),
-            env={**os.environ, "HOME": str(SANDBOX_DIR)},
+            env=bash_env,
         )
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -440,6 +449,7 @@ async def _bash(command: str, timeout: int = BASH_TIMEOUT, workdir: Optional[str
 
     except Exception as e:
         return f"bash error: {e}"
+
 
 
 BASH_TOOL = Tool(
@@ -1319,6 +1329,7 @@ ALL_TOOLS = [
     FILE_VIEW_TOOL,
     FILE_STR_REPLACE_TOOL,
     WEATHER_TOOL,
+    PLACES_SEARCH_TOOL,   # BUG FIX: was missing from ALL_TOOLS — caused 'not found in global registry' warning
     PLACES_MAP_TOOL,
     STORE_MEMORY_TOOL,
     QUERY_MEMORY_TOOL,

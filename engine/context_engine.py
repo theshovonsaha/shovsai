@@ -124,6 +124,10 @@ class ContextEngine:
         use_model = model or self.compression_model
         cleaned_response = self._clean_response(assistant_response)
 
+        from llm.adapter_factory import create_adapter, strip_provider_prefix
+        current_adapter = create_adapter(provider=use_model) if ":" in use_model else self.adapter
+        clean_model = strip_provider_prefix(use_model)
+
         prompt = COMPRESSION_PROMPT.format(
             existing_context=current_context or "(empty — first exchange)",
             user_message=user_message.strip(),
@@ -131,9 +135,9 @@ class ContextEngine:
         )
 
         try:
-            print(f"[ContextEngine] Compressing with {use_model}...")
-            compressed = await self.adapter.complete(
-                model=use_model,
+            print(f"[ContextEngine] Compressing with {use_model} (adapter: {current_adapter.__class__.__name__})...")
+            compressed = await current_adapter.complete(
+                model=clean_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1,
                 max_tokens=400,
@@ -221,9 +225,13 @@ class ContextEngine:
         return "\n".join(merged), keyed_facts, voids
 
     async def _recompress(self, context: str, model: str) -> list[str]:
+        from llm.adapter_factory import create_adapter, strip_provider_prefix
+        current_adapter = create_adapter(provider=model) if ":" in model else self.adapter
+        clean_model = strip_provider_prefix(model)
+
         try:
-            result = await self.adapter.complete(
-                model=model,
+            result = await current_adapter.complete(
+                model=clean_model,
                 messages=[{
                     "role": "user",
                     "content": RECOMPRESSION_PROMPT.format(context=context),

@@ -235,7 +235,7 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
                                 </optgroup>
                             ))}
                         </select>
-                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>The model used for background memory compression and fact extraction (Default: DeepSeek R1).</p>
+                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>The model used for background memory compression. Defaults to the active session model (auto). Override manually if you want a lighter/faster model for compression.</p>
                     </div>
                     <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                         <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Granular Agentic Visibility</label>

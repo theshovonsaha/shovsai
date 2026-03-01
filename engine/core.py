@@ -14,6 +14,7 @@ from llm.llm_adapter     import OllamaAdapter, LLMError
 from engine.context_engine  import ContextEngine
 from orchestration.session_manager import SessionManager
 from plugins.tool_registry   import ToolRegistry
+from guardrails.middleware import GuardrailMiddleware
 from memory.vector_engine   import VectorEngine
 from memory.semantic_graph  import SemanticGraph
 from llm.adapter_factory    import create_adapter, strip_provider_prefix
@@ -72,6 +73,7 @@ class AgentCore:
         context_engine:  ContextEngine,
         session_manager: SessionManager,
         tool_registry:   ToolRegistry,
+        middleware:      Optional[GuardrailMiddleware] = None,
         orchestrator:    Optional[AgenticOrchestrator] = None,
         default_model:   str = "llama3.2",
         embed_model:     str = "nomic-embed-text",
@@ -81,6 +83,7 @@ class AgentCore:
         self.ctx_eng   = context_engine
         self.sessions  = session_manager
         self.tools     = tool_registry
+        self.middleware = middleware
         self.orch      = orchestrator
         self.def_model = default_model
         self.embed_model = embed_model
@@ -518,7 +521,40 @@ class AgentCore:
                 yield _ev("tool_running", tool_name=call.tool_name)
                 # Pass context (session_id, agent_id) to tool execution for hierarchy support
                 context = {"_session_id": sid, "_agent_id": agent_id}
-                result = await self.tools.execute(call, context=context)
+                
+                # Use GuardrailMiddleware if available
+                if self.middleware:
+                    async for event in self.middleware.execute_stream(
+                        call,
+                        session_id = sid,
+                        agent_id   = agent_id,
+                        context    = context,
+                    ):
+                        # Forward middleware events (confirmations, blocks, etc.)
+                        # We yield them all, but the tool_result specifically will also 
+                        # be used to populate our 'result' object for unified yielding below.
+                        if event["type"] != "tool_result":
+                            yield event
+                        
+                        if event["type"] in ("tool_blocked", "confirmation_denied", "confirmation_timeout"):
+                            from plugins.tool_registry import ToolResult
+                            result = ToolResult(
+                                tool_name = call.tool_name,
+                                success   = False,
+                                content   = event.get("reason", event["type"]),
+                            )
+                            break
+                        
+                        if event["type"] == "tool_result":
+                            from plugins.tool_registry import ToolResult
+                            result = ToolResult(
+                                tool_name = call.tool_name,
+                                success   = event["success"],
+                                content   = event["content"],
+                            )
+                            break
+                else:
+                    result = await self.tools.execute(call, context=context)
 
                 if result.success:
                     log("tool", sid, f"{call.tool_name} → {len(result.content)} chars returned", level="ok")
@@ -538,6 +574,7 @@ class AgentCore:
                         "Stop attempting it. Answer with what you know and explain the limitation.]"
                     )
 
+                # Unified yield for tool result - handles both middleware and direct execution
                 yield _ev("tool_result", tool_name=call.tool_name, success=result.success, content=result.content)
 
                 # ── Persist tool result to dedicated DB ───────────────────

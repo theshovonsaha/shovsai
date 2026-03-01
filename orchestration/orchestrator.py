@@ -42,10 +42,14 @@ class AgenticOrchestrator:
         tools_docs = "\n".join([f"- {t['name']}: {t['description']}" for t in tools_list])
         prompt = PLANNING_PROMPT.format(tools_docs=tools_docs, query=query)
         
+        from llm.adapter_factory import create_adapter, strip_provider_prefix
+        current_adapter = create_adapter(provider=model) if ":" in model else self.adapter
+        clean_model = strip_provider_prefix(model)
+        
         try:
-            # Use the faster model for planning
-            response = await self.adapter.complete(
-                model=model,
+            # Use the specified model and its correct adapter for planning
+            response = await current_adapter.complete(
+                model=clean_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.1
             )

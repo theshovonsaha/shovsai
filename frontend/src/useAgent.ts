@@ -655,6 +655,50 @@ export function useAgent() {
         }
     };
 
+    // Guardrails
+    const [pendingConfirmation, setPendingConfirmation] = useState<any | null>(null);
+
+    // Guardrail stream
+    useEffect(() => {
+        if (!currentSessionId) return;
+        const streamUrl = `/api/guardrails/stream/${currentSessionId}`;
+        console.log(`[Guardrails] Connecting to SSE stream: ${streamUrl}`);
+        const es = new EventSource(streamUrl);
+        es.addEventListener('confirmation_required', (e: any) => {
+            console.log('[Guardrails] Confirmation Required:', e.data);
+            const data = JSON.parse(e.data);
+            setPendingConfirmation(data);
+        });
+        es.onerror = (err) => console.error('[Guardrails] SSE Error:', err);
+        return () => es.close();
+    }, [currentSessionId]);
+
+    const approveConfirmation = async (callId: string) => {
+        console.log(`[Guardrails] Approving call: ${callId}`);
+        try {
+            const res = await fetch(`/api/guardrails/approve/${callId}`, { method: 'POST' });
+            if (!res.ok) console.error(`[Guardrails] Approve failed: ${res.status}`);
+            setPendingConfirmation(null);
+        } catch (e) {
+            console.error('[Guardrails] Failed to approve', e);
+        }
+    };
+
+    const denyConfirmation = async (callId: string, reason = 'User denied') => {
+        console.log(`[Guardrails] Denying call: ${callId} reason: ${reason}`);
+        try {
+            const res = await fetch(`/api/guardrails/deny/${callId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason }),
+            });
+            if (!res.ok) console.error(`[Guardrails] Deny failed: ${res.status}`);
+            setPendingConfirmation(null);
+        } catch (e) {
+            console.error('[Guardrails] Failed to deny', e);
+        }
+    };
+
     return {
         health, models, tools, sessions, currentSessionId,
         activeAgentId, setActiveAgentId,
@@ -682,5 +726,6 @@ export function useAgent() {
         clearSessionContext,
         loadSession, newSession, deleteSession,
         addFiles, removeFile, sendMessage, bottomRef,
+        pendingConfirmation, approveConfirmation, denyConfirmation,
     };
 }
