@@ -21,6 +21,27 @@ from llm.adapter_factory    import create_adapter, strip_provider_prefix
 from orchestration.orchestrator import AgenticOrchestrator
 from config.logger          import log
 
+# Max chars to inject per tool result based on model context limits
+# Prevents 413 "Request too large" errors on small-context models
+MODEL_CONTEXT_LIMITS: dict[str, int] = {
+    "moonshotai/kimi-k2-instruct": 8_000,
+    "llama-3.2-3b-preview":        6_000,
+    "llama-3.2-1b-preview":        4_000,
+    "qwen2.5-coder:7b":            10_000,
+    "qwen2.5-coder:3b":            6_000,
+    "gemma2:2b":                   6_000,
+    # Default for unlisted models:
+    "_default":                    40_000,
+}
+
+def _truncate_for_model(content: str, model: str) -> str:
+    """Truncate tool result to fit within the model's practical context limit."""
+    limit = MODEL_CONTEXT_LIMITS.get(model, MODEL_CONTEXT_LIMITS["_default"])
+    if len(content) <= limit:
+        return content
+    half = limit // 2
+    return f"{content[:half]}\n\n[...{len(content) - limit} chars truncated to fit model context...]\n\n{content[-half:]}"
+
 # ── Trace Logger ─────────────────────────────────────────────────────────────
 _TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
 os.makedirs(_TRACE_DIR, exist_ok=True)
@@ -50,6 +71,7 @@ Core Directives:
 - VISUALS: Wrap visual data in ```html or ```svg blocks for the Live View.
 - TOOLS: To use a tool, output ONLY the JSON call: {"tool": "<name>", "arguments": {<args>}}. You may chain multiple tool calls.
 - ACCURACY: Never fabricate tool results. If a tool fails, explain the limitation.
+- WEB FETCH RULE: You may ONLY call web_fetch with URLs that appeared in a prior web_search result in this conversation. NEVER invent or guess URLs. If you need content from a site, run web_search first, then web_fetch the real URL from the results.
 - DELEGATION: Use `delegate_to_agent` when a task is better handled by a specialized agent.
 """
 
@@ -244,6 +266,17 @@ class AgentCore:
 
         # BUG FIX: strip any remaining tool-call JSON and internal reasoning from full_response before storing
         clean_response = self._strip_tool_json(self._strip_reasoning(full_response))
+        
+        # — ENHANCEMENT: Automated Citation Verification —
+        # Detects if the model contradicted historical facts injected via RAG
+        if historical_anchors:
+            citations_valid = self._verify_citations(clean_response, historical_anchors)
+            if not citations_valid:
+                log("rag", sid, "Citation contradiction detected — appending soft correction", level="warn")
+                clean_response += (
+                    "\n\n[Note: Some details above may conflict with previously stored context. "
+                    "Please prioritize established facts from the conversation memory.]"
+                )
         
         # Guard: If response is only tool calls, we still want a placeholder for continuity
         if not clean_response and full_response:
@@ -441,6 +474,7 @@ class AgentCore:
         failed_tools: dict[str, int] = {}
         sid = session_id
         current_adapter = adapter or self.adapter
+        clean_model = strip_provider_prefix(model)
 
         while True:
             turn_buffer = ""
@@ -574,8 +608,31 @@ class AgentCore:
                         "Stop attempting it. Answer with what you know and explain the limitation.]"
                     )
 
+                # Truncate content for specific models to prevent context explosion
+                truncated_content = _truncate_for_model(result.content, clean_model)
+                combined_results.append(
+                    f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
+                    f"{truncated_content}\n"
+                    f"</SYSTEM_TOOL_RESULT>"
+                    f"{pivot_msg}"
+                )
+
                 # Unified yield for tool result - handles both middleware and direct execution
                 yield _ev("tool_result", tool_name=call.tool_name, success=result.success, content=result.content)
+
+                # — INTEGRATION: Auto-index significant tool results into session RAG —
+                if result.success and len(result.content) > 100:
+                    try:
+                        from memory.session_rag import get_session_rag
+                        rag = get_session_rag(sid)
+                        # We use a task here so we don't block the stream loop
+                        asyncio.create_task(rag.index(
+                            content   = result.content,
+                            source    = call.tool_name,
+                            tool_name = call.tool_name,
+                        ))
+                    except Exception as e:
+                        log("rag", sid, f"Failed to index tool result: {e}", level="warn")
 
                 # ── Persist tool result to dedicated DB ───────────────────
                 try:

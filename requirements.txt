@@ -18,3 +18,8 @@ numpy
 websockets
 trafilatura
 anthropic
+sentence-transformers
+docker
+mcp-hub
+# Note: mcp package is required for mcp client support
+mcp

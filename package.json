@@ -1,13 +1,14 @@
 {
     "name": "agent-platform",
-    "version": "1.0.0",
-    "description": "Agent Platform with FastAPI backend and React frontend",
+    "version": "0.6.0",
+    "description": "Agent Platform v0.6.0 with RAG, MCP, and Docker Sandboxing",
     "main": "index.js",
     "scripts": {
         "setup:venv": "python3 -m venv venv && ./venv/bin/pip install -r requirements.txt",
-        "dev:backend": "./venv/bin/uvicorn api.main:app --reload --port 8000",
+        "dev:backend": "./venv/bin/uvicorn api.main:app --reload --host 0.0.0.0 --port 8000",
         "dev:frontend": "cd frontend && npm run dev",
-        "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "dev:services": "docker compose up -d searxng",
+        "dev": "npm run dev:services && concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
         "install:all": "npm install && npm run setup:venv && cd frontend && npm install",
         "start": "npm run dev"
     },

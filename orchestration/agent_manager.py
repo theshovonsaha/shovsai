@@ -140,14 +140,14 @@ class AgentManager:
             tool_registry=filtered_registry,
             middleware=self.guardrail_middleware, # Propagate to delegated agents too
             orchestrator=delegate_orch,      # ← fresh orchestrator with correct adapter
-            default_model=clean_model,
+            default_model=effective_model,   # ← FIX: preserve prefix for adapter resolution
             embed_model=config.embed_model,
             default_system_prompt=config.system_prompt,
         )
 
         full_response = ""
         
-        async for event in agent.chat_stream(user_message=task, session_id=child_sid, model=clean_model):
+        async for event in agent.chat_stream(user_message=task, session_id=child_sid, model=effective_model):
             if event["type"] == "token":
                 full_response += event.get("content", "")
             elif event["type"] == "error":

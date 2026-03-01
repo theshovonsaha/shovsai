@@ -402,53 +402,11 @@ _BLOCKED_COMMANDS = re.compile(
 
 async def _bash(command: str, timeout: int = BASH_TIMEOUT, workdir: Optional[str] = None) -> str:
     """
-    Execute a bash command in an isolated subprocess.
-
-    Safety:
-    - Runs as current user (deploy behind Docker for true isolation)
-    - Blocks known destructive patterns
-    - Enforces timeout
-    - Working directory restricted to SANDBOX_DIR unless overridden
-    - BUG FIX: subprocess now inherits venv PATH so python/pip use the project venv
+    Execute a bash command in a throwaway Docker container.
+    STRICT SECURITY: If Docker is unavailable, no execution is possible.
     """
-    if _BLOCKED_COMMANDS.search(command):
-        return "bash: command blocked by safety policy"
-
-    cwd = Path(workdir).resolve() if workdir else SANDBOX_DIR
-    # Keep cwd inside sandbox
-    if not str(cwd).startswith(str(SANDBOX_DIR)):
-        cwd = SANDBOX_DIR
-
-    # Build subprocess environment — inject venv PATH so `python`/`pip` use the project venv
-    bash_env = {**os.environ, "HOME": str(SANDBOX_DIR)}
-    venv_dir = Path(os.getenv("VIRTUAL_ENV", ""))
-    if venv_dir.exists():
-        venv_bin = str(venv_dir / "bin")
-        bash_env["PATH"] = venv_bin + ":" + bash_env.get("PATH", "")
-        bash_env["VIRTUAL_ENV"] = str(venv_dir)
-
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=str(cwd),
-            env=bash_env,
-        )
-        try:
-            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        except asyncio.TimeoutError:
-            proc.kill()
-            await proc.communicate()
-            return f"bash: command timed out after {timeout}s"
-
-        output = stdout.decode("utf-8", errors="replace").strip()
-        exit_code = proc.returncode
-        prefix = f"[exit {exit_code}]\n" if exit_code != 0 else ""
-        return prefix + (output[:6000] if output else "(no output)")
-
-    except Exception as e:
-        return f"bash error: {e}"
+    from plugins.docker_sandbox import run_in_docker
+    return await run_in_docker(command, timeout=timeout, workdir=workdir)
 
 
 
@@ -1316,6 +1274,41 @@ DELEGATE_TO_AGENT_TOOL = Tool(
     tags=["agentic", "system"]
 )
 
+async def _rag_search(query: str, top_k: int = 5, **kwargs) -> str:
+    """Search everything retrieved in this conversation session."""
+    session_id = kwargs.get("_session_id")
+    if not session_id:
+        return "rag_search requires a session context."
+    from memory.session_rag import get_session_rag
+    rag = get_session_rag(session_id)
+    results = await rag.query(query, top_k=top_k)
+    return rag.format_results_for_llm(results, query)
+
+RAG_SEARCH_TOOL = Tool(
+    name="rag_search",
+    description=(
+        "Search everything retrieved earlier in this conversation — web pages fetched, "
+        "files created, tool results, uploaded documents. Use this BEFORE web_search "
+        "to avoid redundant fetches. Returns the most relevant passages."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What to search for in session memory",
+            },
+            "top_k": {
+                "type": "integer",
+                "description": "Number of results to return (default 5)",
+            },
+        },
+        "required": ["query"],
+    },
+    handler=_rag_search,
+    tags=["memory", "rag"],
+)
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Registration helper
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1335,6 +1328,7 @@ ALL_TOOLS = [
     QUERY_MEMORY_TOOL,
     GENERATE_APP_TOOL,
     PDF_PROCESSOR_TOOL,
+    RAG_SEARCH_TOOL,
     DELEGATE_TO_AGENT_TOOL,
 ]
 
