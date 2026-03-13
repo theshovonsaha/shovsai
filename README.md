@@ -19,6 +19,17 @@ This platform is built like a high-performance engine. It prioritizes **low-late
 - **Deep Semantic Memory Graph**: Beyond simple Vector RAG, the system extracts Subject-Predicate-Object triplets into a SQLite/Vector hybrid Knowledge Graph to map relational connections across long-term interactions.
 - **Live View Rendering**: Real-time rendering of HTML and SVG code blocks with interactive previews.
 
+### 📸 Product Tour
+
+![Plan Execution](images/chat_plan_execution.png)
+*Figure 1: Autonomous planning and multi-tool execution in the V11 core.*
+
+<p align="center">
+  <img src="images/web_fetch_preview.png" width="45%" alt="Web Fetch" />
+  <img src="images/search_results_tavily.png" width="45%" alt="Search Results" />
+</p>
+*Figure 2: Real-time web fetching and multi-provider search results.*
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -460,6 +471,14 @@ This warning is safe to ignore. It's just a notice that some JavaScript bundles 
 - **Semantic Memory Graph**: Persistent long-term factual triplet storage across sessions.
 - **Bash Shell**: Safe, sandboxed script and command execution for code-related tasks.
 - **File System**: Create, view, and modify files with contextual diff support.
+
+### 🛡️ Safety & Configuration
+
+![Safety Confirmation](images/safety_confirmation_modal.png)
+*Figure 3: Built-in safety guardrails requiring manual confirmation for sensitive tool calls.*
+
+![Agent Settings](images/agent_settings_panel.png)
+*Figure 4: Granular control over agent profiles, search engines, and context modes.*
 
 ## 📜 License
 
