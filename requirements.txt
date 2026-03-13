@@ -11,6 +11,7 @@ pydantic
 chromadb
 google-genai
 openai
+tiktoken
 # Voice pipeline
 faster-whisper
 soundfile

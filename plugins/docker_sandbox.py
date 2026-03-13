@@ -92,7 +92,8 @@ def _run_docker_sync(command: str, timeout: int, workdir: Optional[str]) -> str:
             container_workdir = f"/sandbox/{workdir}"
 
     try:
-        output = client.containers.run(
+        # Create container (don't start yet)
+        container = client.containers.create(
             image          = SANDBOX_IMAGE,
             command        = ["bash", "-c", command],
             working_dir    = container_workdir,
@@ -100,17 +101,40 @@ def _run_docker_sync(command: str, timeout: int, workdir: Optional[str]) -> str:
             mem_limit      = SANDBOX_MEMORY,
             pids_limit     = 64,           # prevent fork bombs
             network_mode   = "none",       # no internet from sandbox
-            remove         = True,         # destroyed after run
-            stdout         = True,
-            stderr         = True,
-            # timeout is not supported in run(), it's for the API connection
-            # We handle it via wait() or by allowing the container to be killed if it persists (not implemented here)
         )
-        return output.decode("utf-8", errors="replace").strip()
+        
+        container.start()
+        
+        try:
+            # Wait for completion with timeout
+            result = container.wait(timeout=timeout)
+            status_code = result.get("StatusCode", 0)
+            
+            # Capture output
+            output = container.logs(stdout=True, stderr=True).decode("utf-8", errors="replace").strip()
+            
+            if status_code != 0 and not output:
+                return f"[error] Command failed with exit code {status_code}"
+                
+            return output
+        except Exception as e:
+            if "timeout" in str(e).lower() or "read timed out" in str(e).lower():
+                try:
+                    container.kill()
+                except:
+                    pass
+                return f"[timeout] Command exceeded {timeout}s limit."
+            raise e
+        finally:
+            try:
+                container.remove(force=True)
+            except:
+                pass
+
     except Exception as e:
         err = str(e)
-        if "timed out" in err.lower():
-            return f"[timeout] Command exceeded {timeout}s limit."
+        if "connection" in err.lower() or "socket" in err.lower():
+            return f"[denied] Cannot connect to Docker daemon: {err}. Is Docker Desktop running?"
         return f"[error] {err}"
     finally:
         try:

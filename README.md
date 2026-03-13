@@ -44,12 +44,15 @@ graph TB
         OL[Ollama]
         GR[Groq]
         OA[OpenAI]
+        GA[Gemini]
+        AN[Anthropic]
     end
 
     subgraph Memory ["Triple-Tier Memory"]
         SW[Sliding Window]
-        CC[Compressed Context]
-        VR[ChromaDB Vector RAG]
+        CV[Context V2 - Convergent Graph]
+        SG[Semantic Graph - SQLite]
+        VR[ChromaDB Session RAG]
     end
 
     UI --> API
@@ -221,7 +224,7 @@ EMBED_MODEL=nomic-embed-text  # For semantic search
 
 ```bash
 # Agent behavior
-MAX_TOOL_TURNS=5              # Max tool calls per turn
+MAX_TOOL_TURNS=6              # Max tool calls per turn (AgentCore default)
 DEFAULT_MODEL=llama3.2        # Fallback model
 SLIDING_WINDOW_SIZE=20        # Context window size (msgs)
 
