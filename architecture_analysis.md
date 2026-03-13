@@ -8,11 +8,11 @@ Your codebase reveals a **local-first, multi-agent orchestration platform** with
 2. **Pre-computation Planning (Agentic Orchestrator)** — Before the main LLM processes a turn, a smaller, faster model generates a `<plan>` block detailing strategy and required tools. This reduces main-model hallucination and improves tool utilization.
 3. **Hierarchical Agent Delegation** — A parent "Mother Agent" can securely spin up child sessions using `delegate_to_agent`. Child agents execute scoped tools and return summarized answers back to the parent natively.
 4. **Three-tier Memory Architecture** —
-   - **Sliding Window:** Raw recent messages (via `SessionManager`).
-   - **Compressed Context:** Factual bullet points extracted by a secondary LLM call (`ContextEngine`).
-   - **Vector RAG:** Keyed semantic facts stored in `ChromaDB` restricted to `agent_{id}_session_{sid}` namespaces.
+   - **Sliding Window:** Raw recent messages (via `SessionManager`) with middle-drop truncation.
+   - **Convergent Graph (V2):** Goal-driven context modules and temporal facts (via `ContextEngineV2` + `SemanticGraph`).
+   - **Vector RAG:** Keyed semantic anchors stored in `ChromaDB` restricted to session-specific namespaces.
 5. **Text-mode tool calling** — Instead of relying solely on native LLM APIs, you parse JSON from the model's text output using a custom brace-counting scanner. This allows ANY model (local Ollama, remote Groq) to use tools reliably.
-6. **Dynamic Adapter Propagation** — The system supports hot-swapping between `OllamaAdapter`, `GroqAdapter`, `AnthropicAdapter`, and `OpenAIAdapter`. Role merging and message formatting are dynamically handled based on the provider's strict constraints.
+6. **Dynamic Adapter Propagation** — The system supports hot-swapping between providers. `AgentCore` implements tiered cloud-to-local failover (e.g. Groq ➔ Ollama) to ensure session continuity.
 
 ---
 
@@ -40,15 +40,16 @@ graph TB
     end
 
     subgraph Memory ["Memory Layer"]
-        SM["SessionManager\n(SQLite + LRU)"]
-        CE["ContextEngine\n(LLM Compression)"]
-        VE["VectorEngine\n(ChromaDB RAG)"]
+        SM[SessionManager]
+        CE[ContextEngine V2]
+        SG[SemanticGraph - SQLite]
+        VE[VectorEngine - ChromaDB]
     end
 
     subgraph Tools ["Tool Layer"]
         TR["ToolRegistry"]
         TS["tools.py (bash, pdf, files)"]
-        TW["tools_web.py (SearXNG, HTTP)"]
+        TW["tools_web.py (SearXNG, Fallback Chain)"]
     end
 
     subgraph Providers ["Adapter Layer"]
@@ -56,6 +57,7 @@ graph TB
         OLL["OllamaAdapter"]
         GRQ["GroqAdapter"]
         ANT["AnthropicAdapter"]
+        GEM["GeminiAdapter"]
     end
 
     UI --> Hook --> Chat
@@ -69,7 +71,7 @@ graph TB
 
     AC --> TR --> TS & TW
     AC --> SM
-    AC --> CE --> AD
+    AC --> CE --> SG
     AC --> VE
 ```
 
@@ -115,7 +117,6 @@ While V11 is highly functional, some scenarios observed in the implementation re
 
 | Issue / Scenario | Description | Impact Level |
 |------------------|-------------|--------------|
-| **ChromaDB Waste** | `agent_{id}_session_{sid}` collections are never logically purged upon session deletion via `/sessions/{id}`. | 🟡 Medium (Disk bloat) |
 | **JSON Flashing UI** | Before `retract_last_tokens` is fired, the raw JSON of a tool invocation briefly cascades down the UI SSE stream. | 🟢 Low (Cosmetic) |
 | **Concurrency Lock**| Because `AgentCore` leverages a strict `asyncio.Lock()` around the session, hanging tools (e.g., massive PDF parsing or infinite bash loops) will deadlock the session entirely. | 🟡 Medium |
-| **Provider Fallbacks**| Adapters gracefully throw standard HTTP errors (e.g., Groq 429 Rate Limits), but `AgentCore` does not currently auto-failover to a secondary adapter in real-time. The stream just aborts. | 🔴 High (UX Drop) |
+| **Edge Context**| Very long tool results may hit token budget limits, triggering "Middle-Drop" truncation which can occasionally hide relevant data from the LLM. | 🟡 Medium |
