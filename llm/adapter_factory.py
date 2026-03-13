@@ -25,12 +25,17 @@ def create_adapter(provider: str = None) -> BaseLLMAdapter:
     # 1. Resolve provider identifier
     target_provider = "auto"
     if provider:
-        if ":" in provider:
-            p_part = provider.split(":")[0].lower()
-            if p_part in ["ollama", "openai", "groq", "gemini", "anthropic"]:
-                target_provider = p_part
+        p = provider.strip()
+        p_part = p.lower()
+        if ":" in p:
+            p_part = p.split(":", 1)[0].lower()
+        elif "/" in p:
+            p_part = p.split("/", 1)[0].lower()
+
+        if p_part in ["ollama", "openai", "groq", "gemini", "anthropic"]:
+            target_provider = p_part
         else:
-            target_provider = provider.lower()
+            target_provider = p.lower()
     else:
         target_provider = os.getenv("LLM_PROVIDER", "auto")
 
@@ -73,12 +78,18 @@ def strip_provider_prefix(model_name: str) -> str:
     Removes the "provider:" prefix if present.
     Example: "groq:llama-..." -> "llama-..."
     """
-    if not model_name or ":" not in model_name:
+    if not model_name:
         return model_name
-    
-    parts = model_name.split(":", 1)
-    if parts[0].lower() in ["ollama", "openai", "groq", "gemini", "anthropic"]:
-        return parts[1]
+
+    known = ["ollama", "openai", "groq", "gemini", "anthropic"]
+    if ":" in model_name:
+        parts = model_name.split(":", 1)
+        if parts[0].lower() in known:
+            return parts[1]
+    if "/" in model_name:
+        parts = model_name.split("/", 1)
+        if parts[0].lower() in known:
+            return parts[1]
     return model_name
 
 

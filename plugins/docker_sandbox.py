@@ -26,7 +26,7 @@ from typing import Optional
 SANDBOX_IMAGE   = os.getenv("DOCKER_SANDBOX_IMAGE",   "python:3.11-slim")
 SANDBOX_MEMORY  = os.getenv("DOCKER_SANDBOX_MEMORY",  "256m")
 SANDBOX_TIMEOUT = int(os.getenv("DOCKER_SANDBOX_TIMEOUT", "30"))
-DOCKER_DISABLED = os.getenv("DOCKER_DISABLED", "false").lower() == "true"
+# DOCKER_DISABLED check is now dynamic inside run_in_docker
 
 # Files the agent creates get written here on the host, then mounted read-only
 # into the container so scripts can reference them.
@@ -47,7 +47,7 @@ async def run_in_docker(
     If DOCKER_DISABLED=true or Docker daemon is not available, 
     returns a denial message. No local fallback is allowed.
     """
-    if DOCKER_DISABLED:
+    if os.getenv("DOCKER_DISABLED", "false").lower() == "true":
         return "[denied] Docker execution is explicitly disabled via DOCKER_DISABLED."
 
     try:
@@ -103,7 +103,8 @@ def _run_docker_sync(command: str, timeout: int, workdir: Optional[str]) -> str:
             remove         = True,         # destroyed after run
             stdout         = True,
             stderr         = True,
-            timeout        = timeout,
+            # timeout is not supported in run(), it's for the API connection
+            # We handle it via wait() or by allowing the container to be killed if it persists (not implemented here)
         )
         return output.decode("utf-8", errors="replace").strip()
     except Exception as e:

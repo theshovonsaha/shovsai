@@ -12,7 +12,7 @@ import asyncio
 import os
 from typing import AsyncIterator, Optional
 
-from llm.base_adapter import BaseLLMAdapter, LLMError
+from llm.base_adapter import BaseLLMAdapter, LLMError, RateLimitError, ProviderError
 
 RETRY_DELAYS = [0.5, 1.5, 3.0]
 
@@ -49,6 +49,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> str:
         client = self._get_client()
         msgs = self._prepare_messages(messages, images)
@@ -57,6 +58,9 @@ class OpenAIAdapter(BaseLLMAdapter):
             "messages": msgs,
             "temperature": temperature,
         }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
@@ -70,7 +74,7 @@ class OpenAIAdapter(BaseLLMAdapter):
                 if i < len(RETRY_DELAYS) - 1:
                     await asyncio.sleep(delay)
 
-        raise LLMError(f"OpenAI failed after retries: {last_err}")
+        raise self._wrap_error(last_err)
 
     async def stream(
         self,
@@ -79,6 +83,7 @@ class OpenAIAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         client = self._get_client()
         msgs = self._prepare_messages(messages, images)
@@ -88,17 +93,44 @@ class OpenAIAdapter(BaseLLMAdapter):
             "temperature": temperature,
             "stream": True,
         }
+        if tools:
+            kwargs["tools"] = tools
+            kwargs["tool_choice"] = "auto"
         if max_tokens:
             kwargs["max_tokens"] = max_tokens
 
         try:
             stream = await client.chat.completions.create(**kwargs)
             async for chunk in stream:
+                if not chunk.choices: continue
                 delta = chunk.choices[0].delta
                 if delta and delta.content:
                     yield delta.content
+                
+                # Handle native tool calls from OpenAI
+                if delta and delta.tool_calls:
+                    import json
+                    yield json.dumps({"tool_calls": [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.function.name,
+                                "arguments": tc.function.arguments
+                            }
+                        } for tc in delta.tool_calls
+                    ]})
         except Exception as e:
-            raise LLMError(f"OpenAI stream failed: {e}") from e
+            raise self._wrap_error(e) from e
+
+    def _wrap_error(self, e: Exception) -> LLMError:
+        """Helper to map OpenAI errors to our internal exceptions."""
+        err_str = str(e).lower()
+        if "rate_limit" in err_str or "429" in err_str:
+            return RateLimitError(f"OpenAI Rate Limit: {e}")
+        if "500" in err_str or "503" in err_str or "service_unavailable" in err_str:
+            return ProviderError(f"OpenAI Provider Error: {e}")
+        return LLMError(f"OpenAI Error: {e}")
 
     async def list_models(self) -> list[str]:
         client = self._get_client()

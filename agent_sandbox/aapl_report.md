@@ -1,1 +1,0 @@
-The current stock price of Apple (AAPL) is $263.55 as of 2026-02-28.

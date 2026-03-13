@@ -268,6 +268,8 @@ function App() {
             setPlannerModel={agent.setPlannerModel}
             contextModel={agent.contextModel}
             setContextModel={agent.setContextModel}
+            contextMode={agent.contextMode}
+            setSessionContextMode={agent.setSessionContextMode}
             clearSessionContext={agent.clearSessionContext}
             showPlannerLog={agent.showPlannerLog}
             setShowPlannerLog={agent.setShowPlannerLog}

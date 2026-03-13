@@ -11,7 +11,7 @@ import asyncio
 import os
 from typing import AsyncIterator, Optional, Any
 
-from llm.base_adapter import BaseLLMAdapter, LLMError
+from llm.base_adapter import BaseLLMAdapter, LLMError, RateLimitError, ProviderError
 
 RETRY_DELAYS = [0.5, 1.5, 3.0]
 
@@ -40,6 +40,7 @@ class GeminiAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> str:
         client = self._get_client()
         
@@ -63,7 +64,7 @@ class GeminiAdapter(BaseLLMAdapter):
                 if i < len(RETRY_DELAYS) - 1:
                     await asyncio.sleep(delay)
 
-        raise LLMError(f"Gemini failed after retries: {last_err}")
+        raise self._wrap_error(last_err)
 
     async def stream(
         self,
@@ -72,6 +73,7 @@ class GeminiAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         client = self._get_client()
         contents = self._convert_messages(messages)
@@ -93,7 +95,16 @@ class GeminiAdapter(BaseLLMAdapter):
                 if chunk.text:
                     yield chunk.text
         except Exception as e:
-            raise LLMError(f"Gemini stream failed: {e}") from e
+            raise self._wrap_error(e) from e
+
+    def _wrap_error(self, e: Exception) -> LLMError:
+        """Helper to map Gemini errors to our internal exceptions."""
+        err_str = str(e).lower()
+        if "rate_limit" in err_str or "429" in err_str or "quota" in err_str:
+            return RateLimitError(f"Gemini Rate Limit: {e}")
+        if "500" in err_str or "503" in err_str or "service_unavailable" in err_str:
+            return ProviderError(f"Gemini Provider Error: {e}")
+        return LLMError(f"Gemini Error: {e}")
 
     async def list_models(self) -> list[str]:
         try:

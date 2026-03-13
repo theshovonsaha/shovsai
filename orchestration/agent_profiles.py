@@ -12,6 +12,22 @@ from typing import Optional, List
 from pydantic import BaseModel, Field
 
 DB_PATH = "agents.db"
+DEFAULT_AGENT_TOOLS = [
+    "web_search",
+    "web_fetch",
+    "image_search",
+    "bash",
+    "file_create",
+    "file_view",
+    "file_str_replace",
+    "weather_fetch",
+    "places_search",
+    "places_map",
+    "store_memory",
+    "query_memory",
+    "rag_search",
+    "delegate_to_agent",
+]
 
 PLATINUM_SYSTEM_PROMPT = (
     "You are the 'Shovs' Platinum AI. Your mission: Production-grade intelligence with a Luxury-Dark aesthetic.\n\n"
@@ -79,8 +95,17 @@ class ProfileManager:
                 name="shovs Platinum Assistant",
                 description="The standard high-performance V8 agent.",
                 system_prompt=PLATINUM_SYSTEM_PROMPT,
-                tools=["web_search", "web_fetch", "image_search", "bash", "file_create", "file_view", "file_str_replace", "weather_fetch", "places_search", "places_map", "store_memory", "query_memory"]
+                tools=DEFAULT_AGENT_TOOLS,
             ))
+        else:
+            # Keep existing custom order but guarantee required core tools are present.
+            merged_tools = list(existing_default.tools)
+            for tool in DEFAULT_AGENT_TOOLS:
+                if tool not in merged_tools:
+                    merged_tools.append(tool)
+            if merged_tools != existing_default.tools:
+                existing_default.tools = merged_tools
+                self.create(existing_default)
         
         # Global upgrade for all generic agents
         with sqlite3.connect(self.db_path) as conn:
@@ -92,6 +117,12 @@ class ProfileManager:
                 if p.system_prompt == "You are a specialized AI assistant." or "V8 Platinum" not in p.system_prompt:
                     p.system_prompt = PLATINUM_SYSTEM_PROMPT
                     if p.id == "default": p.name = "shovs Platinum Assistant"
+                    if p.id == "default":
+                        merged_tools = list(p.tools)
+                        for tool in DEFAULT_AGENT_TOOLS:
+                            if tool not in merged_tools:
+                                merged_tools.append(tool)
+                        p.tools = merged_tools
                     self.create(p)
                     print(f"[ProfileManager] Upgraded agent '{p.name}' ({p.id}) to V8 Platinum standards.")
 

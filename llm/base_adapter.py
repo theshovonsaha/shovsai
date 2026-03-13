@@ -15,7 +15,17 @@ from typing import AsyncIterator, Optional
 
 
 class LLMError(Exception):
-    """Raised when an LLM call fails after retries."""
+    """General error for LLM failures."""
+    pass
+
+
+class RateLimitError(LLMError):
+    """Raised when the provider returns a 429 (Rate Limit)."""
+    pass
+
+
+class ProviderError(LLMError):
+    """Raised when the provider is down or returns a 5xx error."""
     pass
 
 
@@ -33,6 +43,7 @@ class BaseLLMAdapter(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> str:
         """Non-streaming completion. Returns full response string."""
         ...
@@ -45,6 +56,7 @@ class BaseLLMAdapter(ABC):
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         """Streaming completion — yields string tokens."""
         ...

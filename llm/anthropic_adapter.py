@@ -9,7 +9,7 @@ import asyncio
 import os
 from typing import AsyncIterator, Optional
 
-from llm.base_adapter import BaseLLMAdapter, LLMError
+from llm.base_adapter import BaseLLMAdapter, LLMError, RateLimitError, ProviderError
 
 RETRY_DELAYS = [0.5, 1.5, 3.0]
 
@@ -44,6 +44,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = 4096,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> str:
         client = self._get_client()
         msgs, system_prompt = self._prepare_messages(messages, images)
@@ -67,7 +68,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                 if i < len(RETRY_DELAYS) - 1:
                     await asyncio.sleep(delay)
 
-        raise LLMError(f"Anthropic failed after retries: {last_err}")
+        raise self._wrap_error(last_err)
 
     async def stream(
         self,
@@ -76,6 +77,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         temperature: float = 0.7,
         max_tokens: Optional[int] = 4096,
         images: Optional[list[str]] = None,
+        tools: Optional[list[dict]] = None,
     ) -> AsyncIterator[str]:
         client = self._get_client()
         msgs, system_prompt = self._prepare_messages(messages, images)
@@ -95,7 +97,16 @@ class AnthropicAdapter(BaseLLMAdapter):
                 async for text in stream.text_stream:
                     yield text
         except Exception as e:
-            raise LLMError(f"Anthropic stream failed: {e}") from e
+            raise self._wrap_error(e) from e
+
+    def _wrap_error(self, e: Exception) -> LLMError:
+        """Helper to map Anthropic errors to our internal exceptions."""
+        err_str = str(e).lower()
+        if "rate_limit" in err_str or "429" in err_str:
+            return RateLimitError(f"Anthropic Rate Limit: {e}")
+        if "500" in err_str or "503" in err_str or "service_unavailable" in err_str or "overloaded" in err_str:
+            return ProviderError(f"Anthropic Provider Error: {e}")
+        return LLMError(f"Anthropic Error: {e}")
 
     async def list_models(self) -> list[str]:
         # Anthropic doesn't have a dynamic list endpoint yet, return common ones

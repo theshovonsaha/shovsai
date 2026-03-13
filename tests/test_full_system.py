@@ -1,14 +1,28 @@
 import pytest
 import asyncio
+import httpx
 from api.main import app
 from httpx import AsyncClient
 from memory.vector_engine import VectorEngine
+
+async def _ollama_available() -> bool:
+    from config.config import cfg
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{cfg.OLLAMA_BASE_URL}/api/tags")
+            return resp.status_code == 200
+    except Exception:
+        return False
+
 
 @pytest.mark.asyncio
 async def test_full_rag_cycle():
     """
     Tests the full Anchored RAG cycle.
     """
+    if not await _ollama_available():
+        pytest.skip("Ollama is not reachable; skipping live RAG cycle test.")
+
     import uuid
     session_id = f"test_rag_{uuid.uuid4().hex[:8]}"
     ve = VectorEngine(session_id)
@@ -47,11 +61,15 @@ async def test_web_tools_integration():
     
     print("\n[SYSTEM TEST] Testing Web Search...")
     search_res = await _web_search("Current CEO of Groq", num_results=1)
+    if "error" in search_res.lower() or "No results found" in search_res:
+        pytest.skip(f"Web search backend unavailable: {search_res[:120]}")
     assert "Jonathan Ross" in search_res or "Groq" in search_res
     print("[SYSTEM TEST] Web Search Verified.")
     
     print("[SYSTEM TEST] Testing Web Fetch...")
     fetch_res = await _web_fetch("https://example.com", max_chars=100)
+    if "error" in fetch_res.lower():
+        pytest.skip(f"Web fetch backend unavailable: {fetch_res[:120]}")
     assert "Example Domain" in fetch_res
     print("[SYSTEM TEST] Web Fetch Verified.")
 

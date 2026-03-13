@@ -22,6 +22,8 @@ interface OptionsPanelProps {
     setPlannerModel: (val: string) => void;
     contextModel: string;
     setContextModel: (val: string) => void;
+    contextMode: 'v1' | 'v2';
+    setSessionContextMode: (mode: 'v1' | 'v2') => void;
     clearSessionContext: () => void;
     showPlannerLog: boolean;
     setShowPlannerLog: (val: boolean) => void;
@@ -43,6 +45,8 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
     setPlannerModel,
     contextModel,
     setContextModel,
+    contextMode,
+    setSessionContextMode,
     clearSessionContext,
     showPlannerLog,
     setShowPlannerLog,
@@ -217,6 +221,20 @@ export const OptionsPanel: React.FC<OptionsPanelProps> = ({
                                 </select>
                             </div>
                         )}
+                    </div>
+
+                    <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
+                        <label className="settings-label" style={{ display: 'block', marginBottom: '8px', fontSize: '13px', fontWeight: 600 }}>Context Engine Mode</label>
+                        <button
+                            className="memory-refresh-btn"
+                            style={{ width: '100%' }}
+                            onClick={() => setSessionContextMode(contextMode === 'v1' ? 'v2' : 'v1')}
+                        >
+                            {contextMode === 'v2' ? '⚡ V2 Convergent' : '📋 V1 Linear'}
+                        </button>
+                        <p className="settings-help" style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-dim)', lineHeight: 1.4 }}>
+                            Per-session toggle. V1 stores linear bullet memory. V2 stores convergent modules ranked by active goals.
+                        </p>
                     </div>
 
                     <div className="settings-card" style={{ marginBottom: '20px', padding: '12px', background: 'var(--bg-card)', borderRadius: '8px', border: '1px solid var(--border-color)' }}>

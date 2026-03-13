@@ -42,6 +42,8 @@ async def test_deep_groq_simulation(mock_index, mock_query):
     
     # 1. Setup Infrastructure targeting Groq directly
     adapter = create_adapter("groq")
+    if not await adapter.health():
+        pytest.skip("Groq API unavailable (missing credentials or network).")
     
     # Strongest reasoning model for the Main Agents
     mother_model = "llama-3.3-70b-versatile"

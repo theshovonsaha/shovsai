@@ -47,6 +47,7 @@ class Session:
     parent_id:           Optional[str] = None
     lock:                asyncio.Lock = field(default_factory=asyncio.Lock)
     message_count:       int = 0
+    context_mode:        str = "v1"  # "v1" (linear) | "v2" (convergent)
 
 
 class SessionManager:
@@ -89,6 +90,9 @@ class SessionManager:
             try:
                 conn.execute("ALTER TABLE sessions ADD COLUMN parent_id TEXT")
             except sqlite3.OperationalError: pass
+            try:
+                conn.execute("ALTER TABLE sessions ADD COLUMN context_mode TEXT DEFAULT 'v1'")
+            except sqlite3.OperationalError: pass
             conn.commit()
 
     def _load_from_db(self):
@@ -115,6 +119,7 @@ class SessionManager:
             first_message=r["first_message"] if "first_message" in r.keys() else None,
             parent_id=r["parent_id"] if "parent_id" in r.keys() else None,
             message_count=r["message_count"],
+            context_mode=r["context_mode"] if "context_mode" in r.keys() else "v1",
         )
 
     def _save_to_db(self, s: Session):
@@ -122,14 +127,14 @@ class SessionManager:
             conn.execute('''
                 INSERT OR REPLACE INTO sessions
                 (id, agent_id, created_at, updated_at, model, system_prompt, compressed_context,
-                 sliding_window, full_history, title, first_message, parent_id, message_count)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 sliding_window, full_history, title, first_message, parent_id, message_count, context_mode)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
                 s.id, s.agent_id, s.created_at, s.updated_at, s.model, s.system_prompt,
                 s.compressed_context,
                 json.dumps(s.sliding_window),
                 json.dumps(s.full_history),
-                s.title, s.first_message, s.parent_id, s.message_count,
+                s.title, s.first_message, s.parent_id, s.message_count, s.context_mode,
             ))
             conn.commit()
 
@@ -186,6 +191,12 @@ class SessionManager:
             s.model = model
             self._save_to_db(s)
 
+    def set_context_mode(self, session_id: str, mode: str):
+        s = self.get(session_id)
+        if s and mode in ("v1", "v2"):
+            s.context_mode = mode
+            self._save_to_db(s)
+
     # ── Mutations ─────────────────────────────────────────────────────────────
 
     def update_context(self, session_id: str, context: str):
@@ -235,25 +246,27 @@ class SessionManager:
                 cursor = conn.cursor()
                 if agent_id:
                     cursor.execute(
-                        "SELECT id, title, created_at, updated_at, model, message_count "
+                        "SELECT id, title, created_at, updated_at, model, message_count, context_mode "
                         "FROM sessions WHERE agent_id = ? AND parent_id IS NULL ORDER BY updated_at DESC", (agent_id,)
                     )
                 else:
                     cursor.execute(
-                        "SELECT id, title, created_at, updated_at, model, message_count "
+                        "SELECT id, title, created_at, updated_at, model, message_count, context_mode "
                         "FROM sessions WHERE parent_id IS NULL ORDER BY updated_at DESC"
                     )
                 return [
                     {"id": r["id"], "title": r["title"] or "New Chat",
                      "created_at": r["created_at"], "updated_at": r["updated_at"],
-                     "model": r["model"], "message_count": r["message_count"]}
+                     "model": r["model"], "message_count": r["message_count"],
+                     "context_mode": r["context_mode"] if "context_mode" in r.keys() else "v1"}
                     for r in cursor.fetchall()
                 ]
         except Exception as e:
             print(f"[SessionManager] DB read failed: {e}")
             return [
                 {"id": s.id, "title": s.title or "New Chat", "created_at": s.created_at,
-                 "updated_at": s.updated_at, "model": s.model, "message_count": s.message_count}
+                 "updated_at": s.updated_at, "model": s.model, "message_count": s.message_count,
+                 "context_mode": s.context_mode}
                 for s in reversed(list(self._sessions.values()))
             ]
 

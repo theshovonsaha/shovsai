@@ -139,6 +139,20 @@ class ToolRegistry:
             for t in self._tools.values()
         ]
 
+    def get_schemas(self) -> list[dict]:
+        """Return tools in standard OpenAPI/function-calling format."""
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": t.parameters
+                }
+            }
+            for t in self._tools.values()
+        ]
+
     def build_tools_block(self) -> str:
         """Inject tool descriptions into system prompt."""
         if not self._tools:

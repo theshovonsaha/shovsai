@@ -7,6 +7,7 @@ export interface Session {
     created_at: string;
     updated_at: string;
     message_count: number;
+    context_mode?: 'v1' | 'v2';
 }
 
 export interface Attachment {
@@ -42,6 +43,7 @@ export function useAgent() {
     const [currentSearchEngine, setCurrentSearchEngine] = useState<string>(localStorage.getItem('shovs_search_engine') || 'duckduckgo');
     const [messages, setMessages] = useState<Message[]>([]);
     const [contextLines, setContextLines] = useState(0);
+    const [contextMode, setContextMode] = useState<'v1' | 'v2'>('v1');
     const [isStreaming, setIsStreaming] = useState(false);
     const [pendingFiles, setPendingFiles] = useState<Attachment[]>([]);
     const [forcedTools, setForcedTools] = useState<string[]>([]);
@@ -242,8 +244,51 @@ export function useAgent() {
             });
             setMessages(loaded);
             setContextLines(data.context_lines || 0);
+            setContextMode(data.context_mode === 'v2' ? 'v2' : 'v1');
             fetchSessions();
         } catch (e) { console.error(e); }
+    };
+
+    const setSessionContextMode = async (mode: 'v1' | 'v2') => {
+        try {
+            let sessionId = currentSessionId;
+
+            // Allow toggling even before first message by creating a session on demand.
+            if (!sessionId) {
+                const createRes = await fetch('/api/sessions', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        agent_id: activeAgentId || 'default',
+                        model: currentModel || undefined,
+                        context_mode: mode,
+                    }),
+                });
+                const createData = await createRes.json();
+                if (!createRes.ok) {
+                    throw new Error(createData?.detail || `HTTP ${createRes.status}`);
+                }
+                sessionId = createData.id;
+                setCurrentSessionId(sessionId);
+                setContextMode(createData.context_mode === 'v2' ? 'v2' : 'v1');
+                await fetchSessions();
+                return;
+            }
+
+            const res = await fetch(`/api/sessions/${sessionId}/context-mode`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode }),
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data?.detail || `HTTP ${res.status}`);
+            }
+            setContextMode(data.context_mode === 'v2' ? 'v2' : 'v1');
+            await fetchSessions();
+        } catch (e) {
+            console.error('Failed to set context mode', e);
+        }
     };
 
     const clearSessionContext = async () => {
@@ -261,6 +306,7 @@ export function useAgent() {
         setCurrentSessionId(null);
         setMessages([]);
         setContextLines(0);
+        setContextMode('v1');
         fetchSessions();
     };
 
@@ -706,6 +752,7 @@ export function useAgent() {
         currentSearchBackend, setCurrentSearchBackend,
         currentSearchEngine, setCurrentSearchEngine,
         messages, contextLines,
+        contextMode, setSessionContextMode,
         isStreaming, pendingFiles,
         forcedTools, setForcedTools,
         isListening, speaking, voiceStatus,

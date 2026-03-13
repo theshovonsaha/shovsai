@@ -395,8 +395,9 @@ IMAGE_SEARCH_TOOL = Tool(
 
 # Commands that are blocked outright regardless of context
 _BLOCKED_COMMANDS = re.compile(
-    r"\b(rm\s+-rf\s+/|mkfs|dd\s+if=|:(){ :|:& };:|shutdown|reboot|"
-    r"chmod\s+777\s+/|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh)\b"
+    r"\b(rm\s+-rf\s+/|mkfs|dd\s+if=|:\(\)\{\s*:\|:&\s*\};:|shutdown|reboot|"
+    r"chmod\s+777\s+/|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh)",
+    re.IGNORECASE
 )
 
 
@@ -405,7 +406,13 @@ async def _bash(command: str, timeout: int = BASH_TIMEOUT, workdir: Optional[str
     Execute a bash command in a throwaway Docker container.
     STRICT SECURITY: If Docker is unavailable, no execution is possible.
     """
+    # STRICT SAFETY: Block dangerous commands before they hit Docker
+    if _BLOCKED_COMMANDS.search(command):
+        return "[denied] Bash command blocked for safety (contains destructive patterns)."
+
     from plugins.docker_sandbox import run_in_docker
+    # Propagate VIRTUAL_ENV hint if present
+    venv_path = os.getenv("VIRTUAL_ENV")
     return await run_in_docker(command, timeout=timeout, workdir=workdir)
 
 
@@ -1138,9 +1145,9 @@ async def _pdf_processor(
             except ImportError:
                 return "Error: 'reportlab' library missing. Run 'pip install reportlab'."
             
-            out = SANDBOX_DIR / output_path
-            out.parent.mkdir(parents=True, exist_ok=True)
-            c = canvas.Canvas(str(out), pagesize=letter)
+            target = _safe_path(output_path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            c = canvas.Canvas(str(target), pagesize=letter)
             width, height = letter
             text_lines = content.split('\n')
             y = height - 100
@@ -1152,7 +1159,7 @@ async def _pdf_processor(
 
         if action == "read":
             if not path: return "Error: 'path' required for read."
-            target = SANDBOX_DIR / path
+            target = _safe_path(path)
             if not target.exists(): return f"Error: {path} not found."
             
             try:
@@ -1180,11 +1187,11 @@ async def _pdf_processor(
                 from pypdf import PdfWriter, PdfReader
                 writer = PdfWriter()
                 for p in paths:
-                    reader = PdfReader(SANDBOX_DIR / p)
+                    reader = PdfReader(_safe_path(p))
                     for page in reader.pages:
                         writer.add_page(page)
-                out = SANDBOX_DIR / output_path
-                with open(out, "wb") as f:
+                target = _safe_path(output_path)
+                with open(target, "wb") as f:
                     writer.write(f)
                 return json.dumps({"status": "success", "file": output_path, "action": "merge"})
             except ImportError:
@@ -1194,12 +1201,13 @@ async def _pdf_processor(
             if not path: return "Error: 'path' required for split."
             try:
                 from pypdf import PdfWriter, PdfReader
-                reader = PdfReader(SANDBOX_DIR / path)
+                reader = PdfReader(_safe_path(path))
                 for i, page in enumerate(reader.pages):
                     writer = PdfWriter()
                     writer.add_page(page)
                     out_name = f"{Path(path).stem}_page_{i+1}.pdf"
-                    with open(SANDBOX_DIR / out_name, "wb") as f:
+                    target = _safe_path(out_name)
+                    with open(target, "wb") as f:
                         writer.write(f)
                 return json.dumps({"status": "success", "action": "split", "pages": len(reader.pages)})
             except ImportError:
@@ -1237,14 +1245,50 @@ PDF_PROCESSOR_TOOL = Tool(
 #  DELEGATION  —  Agentic Tool for orchestrating other agents
 # ══════════════════════════════════════════════════════════════════════════════
 
-async def _delegate_to_agent(target_agent_id: str, task: str, **kwargs) -> str:
+async def _delegate_to_agent(target_agent_id: Optional[str] = None, task: Optional[str] = None, **kwargs) -> str:
     """Handler for the delegate_to_agent tool."""
     if not _agent_manager:
         return "Error: Agent Manager not initialized for delegation."
     
     try:
+        # Compatibility layer:
+        # Some models emit legacy shapes like {"agent": "...", "function": "...", "args": [...]}
+        # even when instructed to use {"target_agent_id", "task"}.
+        target_agent_id = (
+            target_agent_id
+            or kwargs.get("agent")
+            or kwargs.get("agent_id")
+            or kwargs.get("target")
+            or "default"
+        )
+
+        if not task:
+            task = kwargs.get("task")
+
+        legacy_function = kwargs.get("function")
+        legacy_args = kwargs.get("args")
+        if not task and isinstance(legacy_function, str):
+            if legacy_function in {"write_report", "create_report", "create_file", "file_create"} and isinstance(legacy_args, (list, tuple)) and legacy_args:
+                out_path = str(legacy_args[0])
+                report_body = str(legacy_args[1]) if len(legacy_args) > 1 else ""
+                task = (
+                    f"Create a file called '{out_path}' in the sandbox. "
+                    "Use the file_create tool immediately. "
+                    f"Write this content:\n{report_body}"
+                )
+            elif legacy_args is not None:
+                task = f"Execute function '{legacy_function}' with args: {json.dumps(legacy_args)}"
+            else:
+                task = f"Execute function '{legacy_function}'."
+
+        if not task or not str(task).strip():
+            return (
+                "Delegation error: missing task. "
+                "Provide either {'target_agent_id','task'} or legacy {'agent','function','args'}."
+            )
+
         parent_id = kwargs.get("_session_id")
-        log("agent", "system", f"Delegating task to '{target_agent_id}': {task[:50]}...", level="info")
+        log("agent", "system", f"Delegating task to '{target_agent_id}': {str(task)[:50]}...", level="info")
         result = await _agent_manager.run_agent_task(target_agent_id, task, parent_id=parent_id)
         return result
     except Exception as e:
@@ -1266,9 +1310,21 @@ DELEGATE_TO_AGENT_TOOL = Tool(
             "task": {
                 "type": "string",
                 "description": "Detailed description of what the sub-agent should do."
-            }
+            },
+            "agent": {
+                "type": "string",
+                "description": "Legacy alias for target_agent_id."
+            },
+            "function": {
+                "type": "string",
+                "description": "Legacy function-style delegation request."
+            },
+            "args": {
+                "type": "array",
+                "description": "Legacy function arguments for compatibility."
+            },
         },
-        "required": ["target_agent_id", "task"]
+        "required": []
     },
     handler=_delegate_to_agent,
     tags=["agentic", "system"]

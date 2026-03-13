@@ -91,6 +91,23 @@ class AgentManager:
         # ── Inherit parent session's active model ──────────────────────────
         # This fixes the critical bug where delegated agents use `llama3.2`
         # (from the profile) even when the parent is running on Groq/Claude/Gemini.
+        # Important nuance: if the inherited model is a bare id (no provider prefix),
+        # keep the parent's adapter instead of calling create_adapter(model),
+        # which can incorrectly fall back to Ollama.
+        def _provider_from_model(raw_model: Optional[str]) -> Optional[str]:
+            if not raw_model:
+                return None
+            lowered = raw_model.lower()
+            known = ("ollama", "openai", "groq", "gemini", "anthropic")
+            for sep in (":", "/"):
+                if sep in lowered:
+                    head = lowered.split(sep, 1)[0]
+                    if head in known:
+                        return head
+            if lowered in known:
+                return lowered
+            return None
+
         effective_model = config.model  # fallback
         delegation_adapter = self.adapter  # fallback
         
@@ -98,7 +115,17 @@ class AgentManager:
             parent_session = self.sessions.get(parent_id)
             if parent_session and parent_session.model:
                 effective_model = parent_session.model
-                # Create the correct provider adapter for the inherited model
+                provider = _provider_from_model(effective_model)
+                if provider:
+                    # Create the correct provider adapter for explicitly qualified models.
+                    from llm.adapter_factory import create_adapter
+                    delegation_adapter = create_adapter(provider=effective_model)
+                else:
+                    # Bare inherited model: preserve the manager's active adapter.
+                    delegation_adapter = self.adapter
+        else:
+            provider = _provider_from_model(effective_model)
+            if provider:
                 from llm.adapter_factory import create_adapter
                 delegation_adapter = create_adapter(provider=effective_model)
         

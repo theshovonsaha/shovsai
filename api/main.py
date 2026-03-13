@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -46,6 +46,40 @@ from guardrails.api_routes import make_guardrail_router
 
 # ── Config ────────────────────────────────────────────────────────────────────
 FALLBACK_CHAT_MODEL = "llama3.2"
+
+
+def _count_context_items(raw_context: str) -> int:
+    if not raw_context:
+        return 0
+    try:
+        payload = json.loads(raw_context)
+        if isinstance(payload, dict) and payload.get("__v2__"):
+            modules = payload.get("modules", {})
+            return len(modules) if isinstance(modules, dict) else 0
+    except Exception:
+        pass
+    return len([l for l in raw_context.split("\n") if l.strip()])
+
+
+def _context_preview(raw_context: str) -> list[str]:
+    if not raw_context:
+        return []
+    try:
+        payload = json.loads(raw_context)
+        if isinstance(payload, dict) and payload.get("__v2__"):
+            goals = payload.get("active_goals", {})
+            modules = payload.get("modules", {})
+            lines: list[str] = []
+            if isinstance(goals, dict) and goals:
+                lines.append("Active Goals: " + ", ".join(list(goals.keys())[:5]))
+            if isinstance(modules, dict):
+                for key, mod in list(modules.items())[:30]:
+                    content = mod.get("content", "") if isinstance(mod, dict) else ""
+                    lines.append(f"- {key}: {content}")
+            return lines
+    except Exception:
+        pass
+    return [l for l in raw_context.split("\n") if l.strip()]
 
 # ── Singletons ────────────────────────────────────────────────────────────────
 adapter         = OllamaAdapter()
@@ -312,14 +346,61 @@ async def chat_stream(
 @app.post("/sessions/{session_id}/clear_context")
 async def clear_session_context(session_id: str):
     try:
-        agent_manager.session_manager.update_context(session_id, "")
+        session_manager.update_context(session_id, "")
         return {"status": "ok", "message": "Context purged"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+
+@app.post("/sessions/{session_id}/context-mode")
+async def set_context_mode(session_id: str, payload: dict):
+    mode = payload.get("mode", "v1")
+    if mode not in ("v1", "v2"):
+        raise HTTPException(400, "mode must be 'v1' or 'v2'")
+
+    session = session_manager.get(session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    session_manager.set_context_mode(session_id, mode)
+
+    # Keep the warm cached agent instance aligned with the selected mode.
+    agent = agent_manager.get_agent_instance(session.agent_id or "default")
+    agent.set_context_engine(mode)
+    return {"session_id": session_id, "context_mode": mode}
+
 @app.get("/sessions")
 async def list_sessions(agent_id: Optional[str] = None):
     return {"sessions": session_manager.list_sessions(agent_id=agent_id)}
+
+@app.post("/sessions")
+async def create_session(payload: Optional[dict] = Body(default=None)):
+    payload = payload or {}
+    agent_id = payload.get("agent_id") or "default"
+    model = payload.get("model") or FALLBACK_CHAT_MODEL
+    requested_mode = payload.get("context_mode") or "v1"
+    context_mode = requested_mode if requested_mode in ("v1", "v2") else "v1"
+
+    profile = profile_manager.get(agent_id) or profile_manager.get("default")
+    system_prompt = profile.system_prompt if profile else ""
+
+    s = session_manager.create(
+        model=model,
+        system_prompt=system_prompt,
+        agent_id=agent_id,
+    )
+    session_manager.set_context_mode(s.id, context_mode)
+
+    return {
+        "id": s.id,
+        "agent_id": s.agent_id,
+        "model": s.model,
+        "context_mode": context_mode,
+        "created_at": s.created_at,
+        "updated_at": s.updated_at,
+        "message_count": s.message_count,
+        "title": s.title or "New Chat",
+    }
 
 @app.get("/sessions/{session_id}")
 async def get_session(session_id: str):
@@ -330,7 +411,8 @@ async def get_session(session_id: str):
         "id": s.id, "title": s.title or "New Chat", "model": s.model,
         "created_at": s.created_at, "updated_at": s.updated_at,
         "message_count": s.message_count, "compressed_context": s.compressed_context,
-        "context_lines": len([l for l in s.compressed_context.split("\n") if l.strip()]),
+        "context_lines": _count_context_items(s.compressed_context),
+        "context_mode": getattr(s, "context_mode", "v1"),
         "history": s.full_history,
     }
 
@@ -351,7 +433,7 @@ async def get_context(session_id: str):
     s = session_manager.get(session_id)
     if not s:
         raise HTTPException(404, "Session not found")
-    lines = [l for l in s.compressed_context.split("\n") if l.strip()]
+    lines = _context_preview(s.compressed_context)
     return {"session_id": session_id, "lines": len(lines), "context": lines, "raw": s.compressed_context}
 
 @app.get("/memory")

@@ -9,6 +9,7 @@ config centralization, and system prompt alignment.
 import pytest
 import asyncio
 from unittest.mock import MagicMock, AsyncMock, patch
+from httpx import AsyncClient, ASGITransport
 
 
 # ── 1. Gemini Consecutive Role Merging ──────────────────────────────────────
@@ -275,3 +276,138 @@ def test_system_prompt_branding():
     assert "Shovs" in DEFAULT_SYSTEM_PROMPT, "Default prompt must use Shovs branding"
     assert "Antigravity" not in DEFAULT_SYSTEM_PROMPT, "Old branding should be removed"
     assert "Shovs" in PLATINUM_SYSTEM_PROMPT, "Profile prompt must use Shovs branding"
+
+
+# ── 9. Delegation reliability regressions ──────────────────────────────────
+
+def test_default_profile_includes_delegate_tool():
+    """Default agent must include delegate_to_agent so planner/tool loop can execute delegation."""
+    from orchestration.agent_profiles import ProfileManager
+    pm = ProfileManager()
+    default = pm.get("default")
+    assert default is not None
+    assert "delegate_to_agent" in default.tools
+
+
+@pytest.mark.asyncio
+async def test_delegate_tool_accepts_legacy_arguments():
+    """
+    delegate_to_agent tool should accept legacy payload shape:
+    {"agent": "...", "function": "...", "args": [...]}
+    and normalize it into a concrete task.
+    """
+    import plugins.tools as tools_mod
+
+    mock_manager = MagicMock()
+    mock_manager.run_agent_task = AsyncMock(return_value="delegated")
+    with patch.object(tools_mod, "_agent_manager", mock_manager):
+        result = await tools_mod._delegate_to_agent(
+            agent="analyst",
+            function="write_report",
+            args=["aapl_report.md", "Unable to find stock price"],
+            _session_id="parent_session",
+        )
+
+    assert result == "delegated"
+    mock_manager.run_agent_task.assert_awaited_once()
+    awaited = mock_manager.run_agent_task.await_args
+    # run_agent_task(agent_id, task, parent_id=...)
+    assert awaited.args[0] == "analyst"
+    assert "aapl_report.md" in awaited.args[1]
+    assert awaited.kwargs["parent_id"] == "parent_session"
+
+
+@pytest.mark.asyncio
+async def test_delegation_inherits_parent_adapter_when_model_is_bare():
+    """
+    If parent session model is bare (no provider prefix), delegation should keep
+    the manager's active adapter instead of resolving from model text.
+    """
+    from orchestration.agent_manager import AgentManager
+    from orchestration.agent_profiles import ProfileManager, AgentProfile
+    from orchestration.session_manager import SessionManager
+    from engine.context_engine import ContextEngine
+    from plugins.tool_registry import ToolRegistry, Tool
+
+    parent_adapter = MagicMock()
+    sessions = SessionManager()
+    profiles = ProfileManager()
+    registry = ToolRegistry()
+
+    async def _fake_file_create(path: str, content: str = ""):
+        return f"created {path}"
+
+    registry.register(Tool(
+        name="file_create",
+        description="create file",
+        parameters={"type": "object", "properties": {"path": {"type": "string"}}},
+        handler=_fake_file_create,
+    ))
+
+    profiles.create(AgentProfile(
+        id="writer_test",
+        name="Writer Test",
+        model="llama3.2",
+        tools=["file_create"],
+    ))
+
+    manager = AgentManager(
+        profiles=profiles,
+        sessions=sessions,
+        context_engine=ContextEngine(adapter=parent_adapter),
+        adapter=parent_adapter,
+        global_registry=registry,
+        orchestrator=None,
+    )
+
+    parent_sid = "parent_bare_model"
+    sessions.get_or_create(
+        session_id=parent_sid,
+        model="llama-3.3-70b-versatile",  # bare model id (no provider prefix)
+        system_prompt="parent",
+        agent_id="default",
+    )
+
+    captured = {}
+
+    class FakeAgentCore:
+        def __init__(self, *args, **kwargs):
+            captured["adapter"] = kwargs.get("adapter")
+        async def chat_stream(self, **kwargs):
+            yield {"type": "token", "content": "delegated-ok"}
+
+    with patch("engine.core.AgentCore", FakeAgentCore), \
+         patch("llm.adapter_factory.create_adapter") as mock_create_adapter:
+        result = await manager.run_agent_task(
+            agent_id="writer_test",
+            task="create a file",
+            parent_id=parent_sid,
+        )
+
+    assert result == "delegated-ok"
+    assert captured.get("adapter") is parent_adapter
+    mock_create_adapter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_create_session_endpoint_supports_context_mode():
+    """Frontend toggle should work before first message by creating a session with mode."""
+    from api.main import app
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        create = await ac.post("/sessions", json={
+            "agent_id": "default",
+            "model": "llama3.2",
+            "context_mode": "v2",
+        })
+        assert create.status_code == 200
+        payload = create.json()
+        sid = payload["id"]
+        assert payload["context_mode"] == "v2"
+
+        get_s = await ac.get(f"/sessions/{sid}")
+        assert get_s.status_code == 200
+        assert get_s.json().get("context_mode") == "v2"
+
+        await ac.delete(f"/sessions/{sid}")

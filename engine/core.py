@@ -6,41 +6,105 @@ import asyncio
 import json
 import os
 import re
+import tiktoken
 from datetime import datetime
 from typing import AsyncIterator, Optional
 
 from llm.base_adapter import BaseLLMAdapter
-from llm.llm_adapter     import OllamaAdapter, LLMError
+from llm.llm_adapter     import OllamaAdapter, LLMError, RateLimitError, ProviderError
 from engine.context_engine  import ContextEngine
+from engine.context_engine_v2 import ContextEngineV2
 from orchestration.session_manager import SessionManager
 from plugins.tool_registry   import ToolRegistry
 from guardrails.middleware import GuardrailMiddleware
 from memory.vector_engine   import VectorEngine
 from memory.semantic_graph  import SemanticGraph
 from llm.adapter_factory    import create_adapter, strip_provider_prefix
+from engine.circuit_breaker import CircuitBreaker
 from orchestration.orchestrator import AgenticOrchestrator
 from config.logger          import log
 
-# Max chars to inject per tool result based on model context limits
-# Prevents 413 "Request too large" errors on small-context models
-MODEL_CONTEXT_LIMITS: dict[str, int] = {
-    "moonshotai/kimi-k2-instruct": 8_000,
-    "llama-3.2-3b-preview":        6_000,
-    "llama-3.2-1b-preview":        4_000,
-    "qwen2.5-coder:7b":            10_000,
-    "qwen2.5-coder:3b":            6_000,
-    "gemma2:2b":                   6_000,
-    # Default for unlisted models:
-    "_default":                    40_000,
+# Strict token safety limits for providers (especially Groq/Cloud)
+# These represent the TOTAL tokens allowed per request (TPM/Budget)
+TOKEN_SAFETY_LIMITS: dict[str, int] = {
+    "gpt-4o":                  128_000,
+    "gpt-4o-mini":             128_000,
+    "llama-3.3-70b-versatile": 128_000,
+    "llama-3.1-8b-instant":    128_000,
+    "llama3.2":                32_000,
+    "deepseek-r1":             64_000,
+    "moonshotai/kimi-k2-instruct-0905": 9_000,  # Strict Groq limit (10k TPM)
+    "qwen2.5-coder:7b":        10_000,
+    "qwen2.5-coder:3b":        6_000,
+    "gemma2:2b":               6_000,
+    "_default":                16_000, 
 }
 
 def _truncate_for_model(content: str, model: str) -> str:
-    """Truncate tool result to fit within the model's practical context limit."""
-    limit = MODEL_CONTEXT_LIMITS.get(model, MODEL_CONTEXT_LIMITS["_default"])
-    if len(content) <= limit:
+    """Truncate tool result to fit within the model's token context limit."""
+    # We use cl100k_base as a general-purpose tokenizer (used by GPT-4 and many others)
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        encoding = tiktoken.get_encoding("gpt-4")
+        
+    limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
+    # Tool results should only take up at most 70% of the total budget 
+    # to leave room for history/system prompts.
+    safe_tool_limit = int(limit * 0.70)
+    tokens = encoding.encode(content)
+    
+    if len(tokens) <= safe_tool_limit:
         return content
-    half = limit // 2
-    return f"{content[:half]}\n\n[...{len(content) - limit} chars truncated to fit model context...]\n\n{content[-half:]}"
+    
+    keep = safe_tool_limit // 2
+        
+    # Smart truncation: keep first 45% and last 45% of tokens
+    keep = int(safe_tool_limit * 0.45)
+    prefix = encoding.decode(tokens[:keep])
+    suffix = encoding.decode(tokens[-keep:])
+    
+    return f"{prefix}\n\n[...Token Budget Exceeded: {len(tokens) - safe_tool_limit} tokens truncated...]\n\n{suffix}"
+
+def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
+    """
+    Ensure the total token count of the message list fits within the model's safety limit.
+    If not, iteratively drops or truncates the sliding window/system context.
+    """
+    try:
+        encoding = tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        encoding = tiktoken.get_encoding("gpt-4")
+
+    limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
+    
+    def total_tokens(msgs):
+        return sum(len(encoding.encode(m["content"])) for m in msgs)
+
+    # If already safe, return
+    if total_tokens(messages) <= limit:
+        return messages
+
+    log("llm", "budget", f"Total tokens ({total_tokens(messages)}) exceeds model limit ({limit}). Truncating...", level="warn")
+
+    # 1. Truncate the combined system message (context/RAG/tools) first if it's huge
+    if messages and messages[0]["role"] == "system":
+        sys_tokens = encoding.encode(messages[0]["content"])
+        if len(sys_tokens) > limit * 0.6:
+            # Keep first 30% and last 30% of system prompt
+            keep = int(limit * 0.3)
+            prefix = encoding.decode(sys_tokens[:keep])
+            suffix = encoding.decode(sys_tokens[-keep:])
+            messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
+
+    # 2. If still over, drop oldest non-user messages from sliding window (middle of list)
+    # We keep the first system message (index 0) and the last user message (index -1)
+    while total_tokens(messages) > limit and len(messages) > 2:
+        # Remove second message (keeps system and newest user)
+        removed = messages.pop(1)
+        log("llm", "budget", f"Dropped message to fit budget: {removed.get('role')}", level="info")
+
+    return messages
 
 # ── Trace Logger ─────────────────────────────────────────────────────────────
 _TRACE_DIR = os.getenv("TRACE_DIR", "./logs")
@@ -62,6 +126,22 @@ def _trace(agent_id: str, session_id: str, event_type: str, data: dict):
     except Exception:
         pass  # Never crash on trace failure
 
+def sanitize_user_message(content: str) -> str:
+    """
+    Phase 4: Prompt Injection Sanitization.
+    Strips raw XML tool tags and fake metadata blocks from user input 
+    to prevent the user from spoofing tool results or system directives.
+    """
+    if not content:
+        return content
+    # Strip <SYSTEM_TOOL_RESULT> tags
+    content = re.sub(r'</?SYSTEM_TOOL_RESULT[^>]*>', '[censored tag]', content, flags=re.IGNORECASE)
+    # Strip fake thinking blocks
+    content = re.sub(r'</?think>', '[censored tag]', content, flags=re.IGNORECASE)
+    # Strip fake boundary markers
+    content = content.replace("---", "- - -")
+    return content
+
 DEFAULT_SYSTEM_PROMPT = """\
 You are a highly advanced AI agent running on the [Shovs Agent Platform].
 
@@ -74,6 +154,19 @@ Core Directives:
 - WEB FETCH RULE: You may ONLY call web_fetch with URLs that appeared in a prior web_search result in this conversation. NEVER invent or guess URLs. If you need content from a site, run web_search first, then web_fetch the real URL from the results.
 - DELEGATION: Use `delegate_to_agent` when a task is better handled by a specialized agent.
 """
+
+def _count_context_items(raw_context: str) -> int:
+    """Count visible memory units across V1 bullets and V2 JSON context."""
+    if not raw_context:
+        return 0
+    try:
+        payload = json.loads(raw_context)
+        if isinstance(payload, dict) and payload.get("__v2__"):
+            modules = payload.get("modules", {})
+            return len(modules) if isinstance(modules, dict) else 0
+    except Exception:
+        pass
+    return len([l for l in raw_context.split("\n") if l.strip()])
 
 
 MAX_TOOL_TURNS = 6
@@ -111,6 +204,27 @@ class AgentCore:
         self.embed_model = embed_model
         self.def_system_prompt = default_system_prompt or DEFAULT_SYSTEM_PROMPT
 
+        self.circuit_breaker = CircuitBreaker(threshold=3)
+        self.graph = SemanticGraph()
+        self._v1_engine = context_engine
+        self._v2_engine = None  # lazy init
+
+    def set_context_engine(self, mode: str):
+        """Switch between V1 (linear) and V2 (convergent graph) context engine."""
+        if mode == "v2":
+            if self._v2_engine is None:
+                self._v2_engine = ContextEngineV2(
+                    adapter=self.adapter,
+                    semantic_graph=self.graph,
+                    compression_model=self.def_model,
+                )
+            self.ctx_eng = self._v2_engine
+            print("[AgentCore] Context engine: V2 (Convergent Graph)")
+            return
+
+        self.ctx_eng = self._v1_engine
+        print("[AgentCore] Context engine: V1 (Linear Compression)")
+
     async def chat_stream(
         self,
         user_message:   str,
@@ -136,6 +250,13 @@ class AgentCore:
             agent_id=agent_id,
         )
         sid = session.id
+
+        # Respect per-session context engine mode.
+        ctx_mode = getattr(session, "context_mode", "v1")
+        if ctx_mode == "v2" and not isinstance(self.ctx_eng, ContextEngineV2):
+            self.set_context_engine("v2")
+        elif ctx_mode == "v1" and isinstance(self.ctx_eng, ContextEngineV2):
+            self.set_context_engine("v1")
         
         # New: Layer settings (passed via kwargs or extracted from request)
         use_planner    = _to_bool(kw.get("use_planner", True))
@@ -164,10 +285,23 @@ class AgentCore:
             # 4. System default (llama3.2)
             
             resolved_model = model or session.model or self.def_model or "llama3.2"
-            current_use_adapter = create_adapter(provider=resolved_model)
+            known_providers = {"ollama", "openai", "groq", "gemini", "anthropic"}
+            resolved_lower = resolved_model.lower()
+            has_provider_prefix = (
+                any(resolved_lower.startswith(f"{p}:") for p in known_providers)
+                or any(resolved_lower.startswith(f"{p}/") for p in known_providers)
+                or resolved_lower in known_providers
+            )
+            # If the model has no provider prefix, keep the agent's current adapter.
+            # This preserves provider context for bare model ids like "llama-3.3-70b-versatile".
+            if has_provider_prefix:
+                current_use_adapter = create_adapter(provider=resolved_model)
+            else:
+                current_use_adapter = self.adapter
             
             # Use clean model name for API calls
             clean_model = strip_provider_prefix(resolved_model)
+            self.adapter = current_use_adapter
             
             # ── CRITICAL: Propagate dynamic adapter to subsystems ─────────
             # Without this, ContextEngine and Orchestrator remain stuck on 
@@ -176,6 +310,9 @@ class AgentCore:
             if self.orch:
                 self.orch.set_adapter(current_use_adapter)
             
+            # ── Sanitization ─────────
+            user_message = sanitize_user_message(user_message)
+
             # ── Vector RAG ────────────────────────────────────────────────────
             ve = VectorEngine(sid, agent_id=session.agent_id, model=self.embed_model)
             historical_anchors = await ve.query(user_message, limit=3)
@@ -186,7 +323,7 @@ class AgentCore:
             else:
                 log("rag", sid, "No relevant history anchors found")
 
-            current_facts = SemanticGraph().get_current_facts(sid)
+            current_facts = self.graph.get_current_facts(sid)
 
             # ── Agentic Planning (Manager Agent) ──────────────────────────────
             if self.orch and use_planner and not forced_tools:
@@ -248,6 +385,42 @@ class AgentCore:
                         full_response = event.get("clean_response", full_response)
                     elif event["type"] == "error":
                         error_msg = event["message"]
+            except (RateLimitError, ProviderError) as e:
+                # ── Tiered Fallback: Cloud → Local ─────────────────────────────
+                # If cloud provider is down or limited, fallback to Ollama.
+                if not isinstance(current_use_adapter, OllamaAdapter):
+                    log("llm", sid, f"Provider failed ({type(e).__name__}) — triggering local fallback", level="warn")
+                    yield _ev("error", message=f"Cloud provider is temporarily unavailable ({str(e)}). Falling back to local Ollama...")
+                    
+                    fallback_adapter = OllamaAdapter()
+                    fallback_model   = "llama3.2" # Default reliable local model
+                    
+                    try:
+                        async for event in self._agent_loop(
+                            model=fallback_model,
+                            messages=messages,
+                            adapter=fallback_adapter,
+                            search_backend=search_backend,
+                            search_engine=search_engine,
+                            images=images,
+                            agent_id=session.agent_id,
+                            session_id=sid,
+                        ):
+                            yield event
+                            if event["type"] == "token":
+                                full_response += event["content"]
+                            elif event["type"] == "_retract_response":
+                                full_response = event.get("clean_response", full_response)
+                        
+                        # If we reached here, fallback succeeded
+                        log("llm", sid, "Local fallback successful", level="ok")
+                    except Exception as fallback_err:
+                        log("llm", sid, f"Fallback failed: {fallback_err}", level="error")
+                        yield _ev("error", message=f"Fallback also failed: {fallback_err}")
+                else:
+                    log("llm", sid, f"Local provider error: {e}", level="error")
+                    yield _ev("error", message=str(e))
+                return
             except LLMError as e:
                 log("llm", sid, f"LLM error: {e}", level="error")
                 yield _ev("error", message=str(e))
@@ -321,11 +494,11 @@ class AgentCore:
                 model=compression_target, 
             )
             self.sessions.update_context(sid, updated_ctx)
-            lines = len([l for l in updated_ctx.split("\n") if l.strip()])
+            lines = _count_context_items(updated_ctx)
             log("ctx", sid, f"Context updated · {lines} lines · {len(keyed_facts)} new facts, {len(voids)} voids", level="ok")
 
             try:
-                sg = SemanticGraph()
+                sg = self.graph
                 for void in voids:
                     sg.void_temporal_fact(sid, void["subject"], void["predicate"], session.message_count)
                     log("ctx", sid, f"Voided fact: {void['subject']} | {void['predicate']}", level="ok")
@@ -491,21 +664,72 @@ class AgentCore:
                 "messages": messages,  # Full raw context
             })
 
+            # ── CONTEXT SAFETY: Global Budget Enforcement ───────────────
+            # Ensure the total tokens (system + tools + history) fits model limit
+            messages = _enforce_total_budget(messages, model)
+
             # Watchdog: ensure the adapter stream doesn't hang forever
             # Python 3.10 compatible — asyncio.timeout() requires 3.11+
             try:
-                stream_coro = current_adapter.stream(model=model, messages=messages, images=turn_images)
+                # Pass tool schemas for native tool calling support
+                tool_schemas = self.tools.get_schemas() if self.tools.has_tools() else None
+                # Groq native function-calling can hard-fail on some toolsets/prompts.
+                # Fallback to our robust JSON tool-call loop for reliability.
+                if current_adapter.__class__.__name__.lower().startswith("groq"):
+                    tool_schemas = None
+                stream_coro = current_adapter.stream(
+                    model=model, 
+                    messages=messages, 
+                    images=turn_images,
+                    tools=tool_schemas
+                )
                 token_buffer = []
                 
+                in_thought = False
+                
                 async def _consume_stream():
+                    nonlocal in_thought
                     async for token in stream_coro:
-                        token_buffer.append(token)
+                        # Handle structured events from modernized adapters
+                        if token == "<THOUGHT>":
+                            in_thought = True
+                            yield _ev("thought_start")
+                            continue
+                        elif token == "</THOUGHT>":
+                            in_thought = False
+                            yield _ev("thought_end")
+                            continue
+                        
+                        # Handle native tool calls (yielded as JSON string by adapter)
+                        if token.startswith('{"tool_calls":'):
+                            try:
+                                yield {"type": "_native_tool_call", "data": json.loads(token)}
+                                continue
+                            except: pass
+
+                        if in_thought:
+                            yield _ev("thought", content=token)
+                        else:
+                            token_buffer.append(token)
+                            yield _ev("token", content=token)
                 
-                await asyncio.wait_for(_consume_stream(), timeout=60.0)
-                
-                for token in token_buffer:
-                    turn_buffer += token
-                    yield _ev("token", content=token)
+                async for event in _consume_stream():
+                    if event["type"] == "_native_tool_call":
+                        # Convert native tool call to our internal format immediately
+                        native_calls = event["data"]["tool_calls"]
+                        for nc in native_calls:
+                            fn = nc.get("function", {})
+                            call_json = json.dumps({
+                                "tool": fn.get("name"),
+                                "arguments": fn.get("arguments")
+                            })
+                            turn_buffer += f"\n{call_json}\n"
+                        continue
+                        
+                    if event["type"] == "token":
+                        turn_buffer += event["content"]
+                    
+                    yield event
                     
             except asyncio.TimeoutError:
                 log("llm", sid, "Stream watchdog triggered: model stalled", level="error")
@@ -525,7 +749,7 @@ class AgentCore:
                 break
 
             for call in calls:
-                yield _ev("tool_call", tool_name=call.tool_name, arguments=call.arguments)
+                yield _ev("tool_call", tool=call.tool_name, tool_name=call.tool_name, arguments=call.arguments)
             
             yield _ev("retract_last_tokens")
 
@@ -596,26 +820,17 @@ class AgentCore:
                     log("tool", sid, f"{call.tool_name} failed: {result.content[:120]}", level="error")
 
                 if not result.success:
-                    failed_tools[call.tool_name] = failed_tools.get(call.tool_name, 0) + 1
+                    is_open = self.circuit_breaker.record_failure(sid, call.tool_name)
                 else:
-                    failed_tools[call.tool_name] = 0
+                    self.circuit_breaker.record_success(sid, call.tool_name)
+                    is_open = False
 
                 pivot_msg = ""
-                if failed_tools.get(call.tool_name, 0) >= 3:
-                    log("agent", sid, f"Solvability guard: hard pivot on {call.tool_name}", level="warn")
-                    pivot_msg = (
-                        f"\n\n[SYSTEM: Tool '{call.tool_name}' failed 3 times. "
-                        "Stop attempting it. Answer with what you know and explain the limitation.]"
-                    )
+                if is_open:
+                    pivot_msg = self.circuit_breaker.get_pivot_message(call.tool_name)
 
                 # Truncate content for specific models to prevent context explosion
                 truncated_content = _truncate_for_model(result.content, clean_model)
-                combined_results.append(
-                    f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
-                    f"{truncated_content}\n"
-                    f"</SYSTEM_TOOL_RESULT>"
-                    f"{pivot_msg}"
-                )
 
                 # Unified yield for tool result - handles both middleware and direct execution
                 yield _ev("tool_result", tool_name=call.tool_name, success=result.success, content=result.content)
@@ -663,7 +878,7 @@ class AgentCore:
                 # Assemble the XML result block for this specific tool call
                 combined_results.append(
                     f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n"
-                    f"{result.content}\n"
+                    f"{truncated_content}\n"
                     f"</SYSTEM_TOOL_RESULT>"
                     f"{pivot_msg}"
                 )
