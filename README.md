@@ -7,6 +7,7 @@ A high-performance, local-first, hybrid-cloud **General-Purpose AI Agent Orchest
 ![React](https://img.shields.io/badge/frontend-React-61dafb.svg)
 
 ## 🚀 The "V11 Mother Platform" Philosophy
+
 This platform is built like a high-performance engine. It prioritizes **low-latency inference**, **parallel tool execution**, and **hierarchical semantic isolation**. Unlike monolithic frameworks, Agent Platform uses a modular adapter architecture that allows you to swap intelligence providers mid-conversation without losing state or memory consistency.
 
 ## ✨ Key Features
@@ -60,44 +61,57 @@ graph TB
 ## 🛠️ Quick Start
 
 ### 1. Prerequisites
+
 - [Ollama](https://ollama.ai/) (for local inference)
 - [Docker](https://www.docker.com/) (for SearxNG search backend)
 - Python 3.10+
 
 ### 2. Setup
+
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/agent-platform.git
-cd agent-platform
+git clone https://github.com/theshovonsaha/shovsai.git
+cd shovsai
 
 # Install dependencies
 pip install -r requirements.txt
-cd frontend && npm install && cd ..
+npm install
 
 # Setup environment
 cp .env.example .env
 ```
 
 ### 3. Run with Docker (Recommended)
+
 ```bash
 docker-compose up -d
 ```
 
-### 4. Run Manually
-```bash
-# Start Backend
-python -m api.main
+### 4. Run Manually (recommended for development)
 
-# Start Frontend
-cd frontend && npm run dev
+From the project root run the single development command which starts both backend and frontend:
+
+```bash
+# From project root
+npm run dev
+```
+
+If you prefer to start components separately you can still run the backend directly:
+
+```bash
+# Start backend only
+python -m api.main
 ```
 
 ## 🔧 Universal Tool Arsenal
+
 - **Dynamic Web Search**: Multi-backend fallback chain using SearXNG, Tavily, Brave, and DuckDuckGo HTML scraping.
 - **Deep Content Extraction**: Full-page readable content extraction via `httpx` and custom HTML parsing (`Trafilatura`/`BeautifulSoup` style logic).
 - **Document Processing**: Read, split, merge, and generate PDF reports automatically.
 - **Semantic Memory Graph**: Persistent long-term factual triplet storage across sessions.
 - **Bash Shell**: Safe, sandboxed script and command execution for code-related tasks.
 - **File System**: Create, view, and modify files with contextual diff support.
+
 ## 📜 License
+
 MIT License. See [LICENSE](LICENSE) for details.
