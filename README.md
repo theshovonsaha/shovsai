@@ -22,13 +22,13 @@ This platform is built like a high-performance engine. It prioritizes **low-late
 ### 📸 Product Tour
 
 ![Plan Execution](images/chat_plan_execution.png)
-*Figure 1: Autonomous planning and multi-tool execution in the V11 core.*
 
 <p align="center">
   <img src="images/web_fetch_preview.png" width="45%" alt="Web Fetch" />
   <img src="images/search_results_tavily.png" width="45%" alt="Search Results" />
+  <img src="images/safety_confirmation_modal.png" width="45%" alt="Safety Confirmation" />
+  <img src="images/agent_settings_panel.png" width="45%" alt="Agent Settings" />
 </p>
-*Figure 2: Real-time web fetching and multi-provider search results.*
 
 ## 🏗️ Architecture
 
