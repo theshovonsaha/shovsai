@@ -19,6 +19,17 @@ This platform is built like a high-performance engine. It prioritizes **low-late
 - **Deep Semantic Memory Graph**: Beyond simple Vector RAG, the system extracts Subject-Predicate-Object triplets into a SQLite/Vector hybrid Knowledge Graph to map relational connections across long-term interactions.
 - **Live View Rendering**: Real-time rendering of HTML and SVG code blocks with interactive previews.
 
+### 📸 Product Tour
+
+![Plan Execution](images/chat_plan_execution.png)
+
+<p align="center">
+  <img src="images/web_fetch_preview.png" width="45%" alt="Web Fetch" />
+  <img src="images/search_results_tavily.png" width="45%" alt="Search Results" />
+  <img src="images/safety_confirmation_modal.png" width="45%" alt="Safety Confirmation" />
+  <img src="images/agent_settings_panel.png" width="45%" alt="Agent Settings" />
+</p>
+
 ## 🏗️ Architecture
 
 ```mermaid
@@ -344,47 +355,6 @@ Stop with:
 docker compose down
 ```
 
-### 6. Run with Docker
-
-This project includes both production and development Docker setups:
-
-#### Development with Docker (recommended for contributors)
-
-Use the development compose override which mounts your source code and runs hot-reload dev servers inside containers. This preserves the local `npm run dev` workflow and does not build images:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d
-```
-
-The `docker-compose.dev.yml` automatically:
-
-- Starts `searxng`, `backend`, and `frontend` services.
-- Mounts source code with hot reload enabled.
-- Streams logs to your terminal.
-- Exposes ports: `5173` (frontend), `8000` (backend), `8080` (searxng).
-
-Stop with:
-
-```bash
-docker compose -f docker-compose.dev.yml down
-```
-
-#### Production Build
-
-The stock `docker-compose.yml` builds production images using `Dockerfile`s included in the repo:
-
-```bash
-docker compose up -d
-```
-
-This runs optimized, containerized versions of all services. Best for deployments or CI/CD workflows.
-
-Stop with:
-
-```bash
-docker compose down
-```
-
 ### 7. Architecture Overview
 
 ```
@@ -460,6 +430,14 @@ This warning is safe to ignore. It's just a notice that some JavaScript bundles 
 - **Semantic Memory Graph**: Persistent long-term factual triplet storage across sessions.
 - **Bash Shell**: Safe, sandboxed script and command execution for code-related tasks.
 - **File System**: Create, view, and modify files with contextual diff support.
+
+### 🛡️ Safety & Configuration
+
+![Safety Confirmation](images/safety_confirmation_modal.png)
+*Figure 3: Built-in safety guardrails requiring manual confirmation for sensitive tool calls.*
+
+![Agent Settings](images/agent_settings_panel.png)
+*Figure 4: Granular control over agent profiles, search engines, and context modes.*
 
 ## 📜 License
 
