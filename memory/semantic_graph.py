@@ -1,0 +1,221 @@
+"""
+Semantic Graph DB
+-----------------
+A lightweight Hybrid SQLite + Vector Knowledge Graph.
+Stores Subject-Predicate-Object triplets and their vector embeddings
+for fuzzy retrieval ("Deep Memory").
+
+Uses Ollama 'nomic-embed-text' for embedding generation.
+"""
+
+import sqlite3
+import json
+import asyncio
+import numpy as np
+import httpx
+from datetime import datetime
+from typing import List, Dict, Tuple, Optional
+from config.config import cfg
+
+
+class SemanticGraph:
+    def __init__(self, db_path: str = "memory_graph.db", embedding_model: str = "nomic-embed-text"):
+        self.db_path = db_path
+        self.embedding_model = embedding_model
+        self._init_db()
+
+    def _init_db(self):
+        """Initialize the SQLite schema."""
+        with sqlite3.connect(self.db_path) as conn:
+            # We store the embedding as a JSON string for simplicity,
+            # since a personal agent DB will easily fit in memory for numpy cosine sim.
+            # In a production scaled system, we would use sqlite-vec or chroma,
+            # but for a portable agent OS, native SQLite + numpy is 0-dependency exact math.
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS memories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    embedding TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                )
+            ''')
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    session_id TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    predicate TEXT NOT NULL,
+                    object TEXT NOT NULL,
+                    valid_from INTEGER NOT NULL,
+                    valid_to INTEGER,
+                    created_at TEXT NOT NULL
+                )
+            ''')
+            conn.commit()
+
+    async def _get_embedding(self, text: str) -> List[float]:
+        """Fetch an embedding from the provider."""
+        # For simplicity, default to Ollama. If user uses OpenAI, fallback to OpenAI embeddings.
+        if cfg.LLM_PROVIDER == "openai":
+            headers = {"Authorization": f"Bearer {cfg.OPENAI_API_KEY}"}
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    json={"model": "text-embedding-3-small", "input": text},
+                    headers=headers
+                )
+                res.raise_for_status()
+                return res.json()["data"][0]["embedding"]
+        else:
+            # Default to Ollama
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                res = await client.post(
+                    f"{cfg.OLLAMA_BASE_URL}/api/embeddings",
+                    json={"model": self.embedding_model, "prompt": text}
+                )
+                res.raise_for_status()
+                return res.json()["embedding"]
+
+    @staticmethod
+    def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+        """Calculate cosine similarity between two vectors."""
+        v1 = np.array(vec1)
+        v2 = np.array(vec2)
+        norm1 = np.linalg.norm(v1)
+        norm2 = np.linalg.norm(v2)
+        if norm1 == 0 or norm2 == 0:
+            return 0.0
+        return float(np.dot(v1, v2) / (norm1 * norm2))
+
+    async def add_triplet(self, subject: str, predicate: str, object_: str) -> int:
+        """
+        Embed the relationship and store the triplet.
+        We embed the string: "subject predicate object"
+        """
+        text_to_embed = f"{subject} {predicate} {object_}"
+        try:
+            vector = await self._get_embedding(text_to_embed)
+        except Exception as e:
+            raise Exception(f"Failed to generate embedding: {e}")
+
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO memories (subject, predicate, object, embedding, created_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (subject.strip(), predicate.strip(), object_.strip(), json.dumps(vector), now))
+            conn.commit()
+            return cursor.lastrowid
+
+    async def traverse(self, query: str, top_k: int = 5, threshold: float = 0.5) -> List[Dict]:
+        """
+        Perform a semantic traversal:
+        1. Embed the query.
+        2. Calculate cosine similarity against all stored memories in memory.
+        3. Return the top_k matching relationships.
+        """
+        try:
+            query_vector = await self._get_embedding(query)
+        except Exception as e:
+            print(f"[SemanticGraph] Embedding error: {e}")
+            return []
+
+        results = []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, subject, predicate, object, embedding, created_at FROM memories")
+            all_memories = cursor.fetchall()
+
+            for row in all_memories:
+                m_id, sub, pred, obj, emb_json, created = row
+                try:
+                    db_vector = json.loads(emb_json)
+                    sim = self._cosine_similarity(query_vector, db_vector)
+                    if sim >= threshold:
+                        results.append({
+                            "id": m_id,
+                            "subject": sub,
+                            "predicate": pred,
+                            "object": obj,
+                            "similarity": round(sim, 3),
+                            "created_at": created
+                        })
+                except Exception:
+                    continue  # Skip corrupted rows
+
+        # Sort by most similar first
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        return results[:top_k]
+
+    def list_all(self, limit: int = 100) -> list[dict]:
+        """Return all stored memories, newest first."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, subject, predicate, object, created_at FROM memories ORDER BY id DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+        return [
+            {"id": r[0], "subject": r[1], "predicate": r[2], "object": r[3], "created_at": r[4]}
+            for r in rows
+        ]
+
+    def delete_by_id(self, memory_id: int) -> bool:
+        """Delete a single memory by its ID. Returns True if deleted."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def count(self) -> int:
+        """Return total number of stored memories."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM memories")
+            return cursor.fetchone()[0]
+
+    def clear(self):
+        """Wipe the graph."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute("DELETE FROM memories")
+            conn.execute("DELETE FROM facts")
+            conn.commit()
+
+    # ── Temporal Fact Logic (Deterministic Memory) ─────────────────────────
+    def add_temporal_fact(self, session_id: str, subject: str, predicate: str, object_: str, turn: int):
+        """Insert a new fact valid from exactly this turn forward."""
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT INTO facts (session_id, subject, predicate, object, valid_from, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (session_id, subject.strip(), predicate.strip(), object_.strip(), turn, now))
+            conn.commit()
+
+    def void_temporal_fact(self, session_id: str, subject: str, predicate: str, turn: int):
+        """Invalidate the most recent fact matching 'Subject Predicate' starting exactly on this turn."""
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                UPDATE facts 
+                SET valid_to = ? 
+                WHERE session_id = ? AND subject = ? AND predicate = ? AND valid_to IS NULL
+            ''', (turn, session_id, subject.strip(), predicate.strip()))
+            conn.commit()
+
+    def get_current_facts(self, session_id: str) -> List[Tuple[str, str, str]]:
+        """Return all currently valid facts (un-voided) for this session."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT subject, predicate, object 
+                FROM facts 
+                WHERE session_id = ? AND valid_to IS NULL
+                ORDER BY valid_from ASC
+            ''', (session_id,))
+            return cursor.fetchall()
+

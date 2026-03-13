@@ -1,0 +1,26 @@
+fastapi
+uvicorn
+httpx
+python-multipart
+pymupdf
+uvloop; platform_system != 'Windows'
+watchfiles
+python-dotenv
+groq
+pydantic
+chromadb
+google-genai
+openai
+# Voice pipeline
+faster-whisper
+soundfile
+numpy
+websockets
+trafilatura
+anthropic
+sentence-transformers
+docker
+# mcp-hub is a custom local package, not available in PyPI - comment out or install separately
+# mcp-hub
+# Note: mcp package is required for mcp client support
+mcp

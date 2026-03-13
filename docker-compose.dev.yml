@@ -1,0 +1,53 @@
+services:
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - '8080:8080'
+    volumes:
+      - ./searxng:/etc/searxng
+    networks:
+      - agent-network
+
+  backend:
+    image: python:3.11-slim
+    volumes:
+      - .:/app
+    working_dir: /app
+    ports:
+      - '8000:8000'
+    environment:
+      - PYTHONUNBUFFERED=1
+      - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      - SEARXNG_BASE_URL=http://searxng:8080
+    command: >
+      bash -lc "
+      pip install -q -r requirements.txt &&
+      uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+      "
+    depends_on:
+      - searxng
+    networks:
+      - agent-network
+
+  frontend:
+    image: node:18
+    volumes:
+      - ./frontend:/app/frontend
+      - ./frontend/node_modules:/app/frontend/node_modules
+    working_dir: /app/frontend
+    ports:
+      - '5173:5173'
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000
+    command: >
+      bash -lc "
+      npm install --silent &&
+      npm run dev -- --host 0.0.0.0
+      "
+    networks:
+      - agent-network
+
+networks:
+  agent-network:
+    driver: bridge
