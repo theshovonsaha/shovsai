@@ -20,6 +20,7 @@ trafilatura
 anthropic
 sentence-transformers
 docker
-mcp-hub
+# mcp-hub is a custom local package, not available in PyPI - comment out or install separately
+# mcp-hub
 # Note: mcp package is required for mcp client support
 mcp
