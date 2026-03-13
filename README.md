@@ -355,47 +355,6 @@ Stop with:
 docker compose down
 ```
 
-### 6. Run with Docker
-
-This project includes both production and development Docker setups:
-
-#### Development with Docker (recommended for contributors)
-
-Use the development compose override which mounts your source code and runs hot-reload dev servers inside containers. This preserves the local `npm run dev` workflow and does not build images:
-
-```bash
-docker compose -f docker-compose.dev.yml up -d
-```
-
-The `docker-compose.dev.yml` automatically:
-
-- Starts `searxng`, `backend`, and `frontend` services.
-- Mounts source code with hot reload enabled.
-- Streams logs to your terminal.
-- Exposes ports: `5173` (frontend), `8000` (backend), `8080` (searxng).
-
-Stop with:
-
-```bash
-docker compose -f docker-compose.dev.yml down
-```
-
-#### Production Build
-
-The stock `docker-compose.yml` builds production images using `Dockerfile`s included in the repo:
-
-```bash
-docker compose up -d
-```
-
-This runs optimized, containerized versions of all services. Best for deployments or CI/CD workflows.
-
-Stop with:
-
-```bash
-docker compose down
-```
-
 ### 7. Architecture Overview
 
 ```
