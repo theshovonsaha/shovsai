@@ -6,6 +6,7 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 
 interface RichContentViewerProps {
@@ -81,16 +82,27 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
     }
 
     if (renderData && (renderData.path || renderData.type === 'app_view')) {
+        const appPath = typeof renderData.path === 'string' ? encodeURI(renderData.path) : '';
+        if (!appPath) {
+            return (
+                <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>HTML Preview unavailable</div>
+                    <div style={{ fontSize: '13px', opacity: 0.8 }}>
+                        The app preview path is missing from the tool response.
+                    </div>
+                </div>
+            );
+        }
         return (
             <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
                 <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
                     <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '18px' }}>◈</span> {renderData.title || 'V8 PLATINUM APP'}
                     </span>
-                    <a href={renderData.path} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN FULLSCREEN ↗</a>
+                    <a href={appPath} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN FULLSCREEN ↗</a>
                 </div>
                 <iframe
-                    src={renderData.path}
+                    src={appPath}
                     title={renderData.title}
                     style={{ width: '100%', height: '600px', border: 'none', background: '#000' }}
                     sandbox="allow-scripts allow-popups allow-same-origin"
@@ -182,7 +194,7 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
                 <div
                     className="code-preview-area"
                     style={{ padding: '16px', background: '#fff', color: '#000', overflowX: 'auto' }}
-                    dangerouslySetInnerHTML={{ __html: code }}
+                    dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(code) }}
                 />
             ) : (
                 <SyntaxHighlighter

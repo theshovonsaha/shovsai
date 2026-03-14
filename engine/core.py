@@ -250,6 +250,68 @@ class AgentCore:
         self.ctx_eng = self._v1_engine
         print("[AgentCore] Context engine: V1 (Linear Compression)")
 
+    def _direct_tool_hints(
+        self,
+        query: str,
+        *,
+        tools_list: list[dict],
+        session_has_history: bool,
+        current_fact_count: int,
+        failed_tools: Optional[list[str]] = None,
+    ) -> list[str]:
+        """Deterministic tool hints for direct mode when planner is disabled."""
+        available = {
+            t.get("name")
+            for t in tools_list
+            if isinstance(t, dict) and isinstance(t.get("name"), str)
+        }
+        failed = set(failed_tools or [])
+        q = (query or "").lower().strip()
+
+        if not q:
+            return []
+        if re.fullmatch(r"(hi|hello|hey|yo|thanks|thank you|ok|okay)[!. ]*", q):
+            return []
+
+        suggestions: list[str] = []
+
+        # Memory-first bias for ongoing conversations.
+        if (
+            (session_has_history or current_fact_count > 0)
+            and "query_memory" in available
+            and "query_memory" not in failed
+        ):
+            suggestions.append("query_memory")
+
+        if re.search(r"https?://", q):
+            if "web_fetch" in available and "web_fetch" not in failed:
+                suggestions.append("web_fetch")
+        elif re.search(r"\b(news|latest|current|today|who is|what is|when is|where is)\b", q):
+            if "web_search" in available and "web_search" not in failed:
+                suggestions.append("web_search")
+
+        if re.search(r"\b(weather|temperature|forecast)\b", q):
+            if "weather_fetch" in available and "weather_fetch" not in failed:
+                suggestions.append("weather_fetch")
+
+        if re.search(r"\b(image|photo|picture|logo)\b", q):
+            if "image_search" in available and "image_search" not in failed:
+                suggestions.append("image_search")
+
+        if re.search(r"\b(create|build|generate).*\b(html|dashboard|app|webpage)\b", q):
+            for candidate in ("generate_app", "file_create"):
+                if candidate in available and candidate not in failed:
+                    suggestions.append(candidate)
+                    break
+
+        ordered = []
+        seen = set()
+        for name in suggestions:
+            if name not in seen:
+                seen.add(name)
+                ordered.append(name)
+        return ordered
+
     async def chat_stream(
         self,
         user_message:   str,
@@ -349,6 +411,7 @@ class AgentCore:
                 log("rag", sid, "No relevant history anchors found")
 
             current_facts = self.graph.get_current_facts(sid)
+            failed_tools = self.circuit_breaker.get_failed_tools(sid)
 
             # ── Agentic Planning (Manager Agent) ──────────────────────────────
             if self.orch and use_planner and not forced_tools:
@@ -362,7 +425,7 @@ class AgentCore:
                         model=use_p_model,
                         session_has_history=bool(getattr(session, "full_history", [])),
                         current_fact_count=len(current_facts),
-                        failed_tools=self.circuit_breaker.get_failed_tools(sid),
+                        failed_tools=failed_tools,
                     )
                     planned_tools = [
                         t.get("name")
@@ -385,6 +448,22 @@ class AgentCore:
                     force_memory = True
             elif not use_planner:
                 log("agent", sid, "Planner bypassed (Direct Mode)")
+                if not forced_tools:
+                    direct_tools = self._direct_tool_hints(
+                        user_message,
+                        tools_list=self.tools.list_tools(),
+                        session_has_history=bool(getattr(session, "full_history", [])),
+                        current_fact_count=len(current_facts),
+                        failed_tools=failed_tools,
+                    )
+                    if direct_tools:
+                        forced_tools = direct_tools
+                        yield _ev(
+                            "plan",
+                            strategy="Planner disabled; using direct-mode tool hints.",
+                            tools=direct_tools,
+                            confidence=0.35,
+                        )
 
             messages = self._build_messages(
                 system_prompt=session.system_prompt,
