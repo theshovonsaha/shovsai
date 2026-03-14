@@ -39,6 +39,7 @@ from __future__ import annotations
 import os
 import re
 import json
+import hashlib
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from typing import Optional
 
@@ -68,6 +69,28 @@ HTTP_HEADERS = {
 # BUG FIX: was "groq/compound" — that is not a valid model name and causes 413.
 # The correct model strings are "compound-beta" and "compound-beta-mini".
 GROQ_COMPOUND_MODEL = "compound-beta"
+TRACKING_PARAMS_TO_REMOVE = {
+    "fbclid",
+    "gclid",
+    "igshid",
+    "mc_eid",
+    "msclkid",
+    "twclid",
+}
+MAX_UNIQUE_DOMAINS_IN_SUMMARY = 8
+# 1 bonus point per ~120 chars rewards richer snippets without over-weighting verbosity.
+SNIPPET_SIGNAL_CHARS = 120
+SNIPPET_SIGNAL_MAX_BONUS = 3
+# Over-fetch to create a larger pool for dedupe/curation, then trim to requested size.
+FETCH_MULTIPLIER = 2
+FETCH_BONUS = 4
+MAX_FETCH_LIMIT = 30
+# Tool contract currently caps requested web results to keep payloads compact.
+MAX_REQUESTED_RESULTS = 20
+TITLE_SIGNAL_WEIGHT = 3
+SNIPPET_SIGNAL_WEIGHT = 3
+URL_SIGNAL_WEIGHT = 2
+SOURCE_SIGNAL_WEIGHT = 1
 
 
 def _clean_text(value: str) -> str:
@@ -89,8 +112,8 @@ def _normalize_url(url: str) -> str:
 
     query_params = []
     for k, v in parse_qsl(parts.query, keep_blank_values=True):
-        key = k.lower()
-        if key.startswith("utm_") or key in {"gclid", "fbclid", "mc_eid"}:
+        lowercase_key = k.lower()
+        if lowercase_key.startswith("utm_") or lowercase_key in TRACKING_PARAMS_TO_REMOVE:
             continue
         query_params.append((k, v))
 
@@ -98,6 +121,27 @@ def _normalize_url(url: str) -> str:
     clean_path = clean_path.rstrip("/") or "/"
     clean_query = urlencode(query_params, doseq=True)
     return urlunsplit((parts.scheme.lower(), parts.netloc.lower(), clean_path, clean_query, ""))
+
+
+def _generate_dedupe_key(title: str, snippet: str, url: str) -> str:
+    normalized_url = _normalize_url(url)
+    if normalized_url:
+        return normalized_url
+    hash_input = f"title:{title.strip().lower()}|snippet:{snippet.strip().lower()}"
+    return hashlib.sha256(hash_input.encode("utf-8")).hexdigest()
+
+
+def _estimate_unique_candidates(raw_results: list[dict]) -> int:
+    """Fast estimate used in auto-backend loop to avoid repeated full curation."""
+    seen: set[str] = set()
+    for item in raw_results or []:
+        title = str(item.get("title", ""))
+        snippet = str(item.get("snippet", ""))
+        url = str(item.get("url", ""))
+        dedupe_key = _generate_dedupe_key(title, snippet, url)
+        if dedupe_key:
+            seen.add(dedupe_key)
+    return len(seen)
 
 
 def _curate_results(raw_results: list[dict], num_results: int) -> tuple[list[dict], dict]:
@@ -114,7 +158,7 @@ def _curate_results(raw_results: list[dict], num_results: int) -> tuple[list[dic
         if not (title or snippet or url):
             continue
 
-        dedupe_key = url or f"{title.lower()}|{snippet.lower()[:120]}"
+        dedupe_key = _generate_dedupe_key(title, snippet, url)
         if dedupe_key in seen:
             continue
         seen.add(dedupe_key)
@@ -129,24 +173,29 @@ def _curate_results(raw_results: list[dict], num_results: int) -> tuple[list[dic
 
         signal_score = 0
         if title:
-            signal_score += 3
+            signal_score += TITLE_SIGNAL_WEIGHT
         if snippet:
-            signal_score += 3
-            signal_score += min(len(snippet) // 120, 3)
+            signal_score += SNIPPET_SIGNAL_WEIGHT
+            # Award up to +3 signal for richer snippets (1 point per ~120 chars).
+            signal_score += min(len(snippet) // SNIPPET_SIGNAL_CHARS, SNIPPET_SIGNAL_MAX_BONUS)
         if url:
-            signal_score += 2
-        if source and "error" not in source:
-            signal_score += 1
+            signal_score += URL_SIGNAL_WEIGHT
+        if source and not source.endswith("-error"):
+            signal_score += SOURCE_SIGNAL_WEIGHT
 
-        curated = {**item, "title": title, "url": url, "snippet": snippet}
+        curated = {"title": title, "url": url, "snippet": snippet}
         if source:
             curated["source"] = source
+        if item.get("published"):
+            curated["published"] = item.get("published")
+        if "score" in item:
+            curated["score"] = item.get("score")
         curated["_signal_score"] = signal_score
         cleaned.append(curated)
 
     cleaned.sort(key=lambda r: r.get("_signal_score", 0), reverse=True)
     final_results = []
-    for entry in cleaned[:max(1, int(num_results))]:
+    for entry in cleaned[:num_results]:
         item = dict(entry)
         item.pop("_signal_score", None)
         final_results.append(item)
@@ -155,7 +204,7 @@ def _curate_results(raw_results: list[dict], num_results: int) -> tuple[list[dic
         "requested_results": int(num_results),
         "raw_results_considered": len(raw_results or []),
         "curated_results": len(final_results),
-        "unique_domains": sorted(domain_counts, key=domain_counts.get, reverse=True)[:8],
+        "unique_domains": sorted(domain_counts, key=lambda x: domain_counts.get(x, 0), reverse=True)[:MAX_UNIQUE_DOMAINS_IN_SUMMARY],
     }
 
 
@@ -495,8 +544,10 @@ async def _web_search(query: str, num_results: int = 8, backend: str = "auto", s
         backend = search_engine.lower()
         
     print(f"[INTERNAL DETECTION] Starting search for: '{query}' (backend: {backend})")
-    num_results = max(1, min(int(num_results), 20))
-    fetch_target = min(max(num_results * 2, num_results + 4), 30)
+    num_results = max(1, min(int(num_results), MAX_REQUESTED_RESULTS))
+    multiplied_fetch = num_results * FETCH_MULTIPLIER
+    buffered_fetch = num_results + FETCH_BONUS
+    fetch_target = min(max(multiplied_fetch, buffered_fetch), MAX_FETCH_LIMIT)
     collected_results: list[dict] = []
     used_backends: list[str] = []
 
@@ -515,9 +566,8 @@ async def _web_search(query: str, num_results: int = 8, backend: str = "auto", s
             if candidate and not all(r.get("source", "").endswith("-error") for r in candidate):
                 collected_results.extend(candidate)
                 used_backends.append(name)
-                curated_preview, _ = _curate_results(collected_results, num_results)
                 print(f"[INTERNAL DETECTION] Search success via {name}. Found {len(candidate)} results.")
-                if len(curated_preview) >= num_results:
+                if _estimate_unique_candidates(collected_results) >= num_results:
                     break
             if candidate:
                 print(f"[INTERNAL DETECTION] Backend {name} returned error or no results.")

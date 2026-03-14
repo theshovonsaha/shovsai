@@ -48,9 +48,10 @@ async def test_web_search_curates_and_dedupes_results(monkeypatch):
     assert data["results"][0]["snippet"] == "Alpha snippet with extra spaces"
     assert data["results"][0]["url"] == "https://example.com/post?id=1"
     assert data["results"][1]["url"] == "https://another.example.org/news"
+    assert all(r["title"] or r["url"] or r["snippet"] for r in data["results"])
     assert data["context_summary"]["raw_results_considered"] == 4
     assert data["context_summary"]["curated_results"] == 2
-    assert "example.com" in data["context_summary"]["unique_domains"]
+    assert any(domain == "example.com" for domain in data["context_summary"]["unique_domains"])
 
 
 @pytest.mark.asyncio
