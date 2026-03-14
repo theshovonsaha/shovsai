@@ -1,5 +1,47 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
+const TOOL_ARG_PRIORITY = ['query', 'url', 'path', 'title', 'filename', 'language', 'command', 'prompt'];
+const CONTENT_SIZE_SUMMARY_KEYS = ['code', 'html', 'content', 'svg', 'script', 'css', 'markup'];
+
+const formatToolArgumentValue = (key: string, value: unknown): string => {
+    if (typeof value === 'string') {
+        const normalized = value.replace(/\s+/g, ' ').trim();
+        if (!normalized) return 'empty';
+
+        if (CONTENT_SIZE_SUMMARY_KEYS.some(token => key.toLowerCase().includes(token))) {
+            return `${normalized.length} chars`;
+        }
+
+        return normalized.length > 72 ? `${normalized.slice(0, 69)}…` : normalized;
+    }
+
+    if (Array.isArray(value)) {
+        return `${value.length} item${value.length === 1 ? '' : 's'}`;
+    }
+
+    if (value && typeof value === 'object') {
+        const fieldCount = Object.keys(value as Record<string, unknown>).length;
+        return `${fieldCount} field${fieldCount === 1 ? '' : 's'}`;
+    }
+
+    return String(value);
+};
+
+const summarizeToolArguments = (args: Record<string, unknown> = {}): string => {
+    const entries = Object.entries(args);
+    if (!entries.length) return 'starting…';
+
+    const sorted = [...entries].sort(([a], [b]) => {
+        const aRank = TOOL_ARG_PRIORITY.indexOf(a);
+        const bRank = TOOL_ARG_PRIORITY.indexOf(b);
+        return (aRank === -1 ? Number.MAX_SAFE_INTEGER : aRank) - (bRank === -1 ? Number.MAX_SAFE_INTEGER : bRank);
+    });
+
+    const displayed = sorted.slice(0, 3).map(([key, value]) => `${key}: ${formatToolArgumentValue(key, value)}`);
+    const remaining = sorted.length - displayed.length;
+    return remaining > 0 ? `${displayed.join(' · ')} · +${remaining} more` : displayed.join(' · ');
+};
+
 export interface Session {
     id: string;
     title: string;
@@ -455,14 +497,10 @@ export function useAgent() {
                                 break;
 
                             case 'tool_call':
-                                // FIX: show tool name + first arg value, not raw JSON blob
-                                const argSummary = Object.entries(ev.arguments || {})
-                                    .map(([k, v]) => `${k}: ${String(v).slice(0, 60)}`)
-                                    .join(', ');
                                 addBlock({
                                     type: 'tool_call',
                                     tool: ev.tool_name,
-                                    content: argSummary,
+                                    content: summarizeToolArguments(ev.arguments || {}),
                                 });
                                 break;
 

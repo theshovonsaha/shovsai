@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
@@ -6,11 +6,60 @@ import rehypeKatex from 'rehype-katex';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import DOMPurify from 'dompurify';
 import 'katex/dist/katex.min.css';
 
 interface RichContentViewerProps {
     content: string;
 }
+
+interface WebSearchResult {
+    title: string;
+    url: string;
+    snippet: string;
+}
+
+const FORBIDDEN_PREVIEW_ATTRIBUTES = ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onmouseenter', 'onmouseleave', 'onchange', 'onsubmit'];
+const SAFE_HTML_PREVIEW_CONFIG = {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link', 'meta'],
+    FORBID_ATTR: FORBIDDEN_PREVIEW_ATTRIBUTES,
+};
+const SAFE_SVG_PREVIEW_CONFIG = {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ['script', 'foreignObject'],
+    FORBID_ATTR: FORBIDDEN_PREVIEW_ATTRIBUTES,
+};
+
+const buildPreviewDocument = (language: string, sanitizedMarkup: string) => {
+    if (language === 'svg') {
+        return [
+            '<!doctype html>',
+            '<html>',
+            '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:#ffffff;">',
+            sanitizedMarkup,
+            '</body>',
+            '</html>',
+        ].join('');
+    }
+
+    return sanitizedMarkup;
+};
+
+const tryParseStructuredContent = (content: string) => {
+    try {
+        const trimmed = content.trim();
+        const start = trimmed.indexOf('{');
+        const end = trimmed.lastIndexOf('}');
+        if (start !== -1 && end !== -1 && end > start) {
+            return JSON.parse(trimmed.substring(start, end + 1));
+        }
+    } catch {
+        // Fallback to markdown
+    }
+
+    return null;
+};
 
 export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content }) => {
     // Sanitize content to handle common LLM output issues that break KaTeX
@@ -24,19 +73,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         .replace(/%(\s*\$)/g, '$1');
 
     // Check if the content is a JSON result from tools
-    let renderData: any = null;
-    try {
-        const trimmed = sanitizedContent.trim();
-        // Look for the first { and last } to extract JSON even if there are prefixes/suffixes
-        const start = trimmed.indexOf('{');
-        const end = trimmed.lastIndexOf('}');
-        if (start !== -1 && end !== -1 && end > start) {
-            const potentialJson = trimmed.substring(start, end + 1);
-            renderData = JSON.parse(potentialJson);
-        }
-    } catch (e) {
-        // Fallback to normal markdown
-    }
+    const renderData = tryParseStructuredContent(sanitizedContent);
 
     if (renderData && renderData.type === 'web_search_results') {
         return (
@@ -44,8 +81,8 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                 <div style={{ fontSize: '11px', color: 'var(--text-dim)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                     Results for: <span style={{ color: 'var(--primary)' }}>{renderData.query}</span>
                 </div>
-                {renderData.results.map((r: any, i: number) => (
-                    <div key={i} className="search-card" style={{ background: 'var(--surface2, #1e1e1e)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                {renderData.results.map((r: WebSearchResult, i: number) => (
+                    <div key={`${i}-${r.url}`} className="search-card" style={{ background: 'var(--surface2, #1e1e1e)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                         <a href={r.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none', fontSize: '14px', display: 'block', marginBottom: '4px' }}>
                             {r.title}
                         </a>
@@ -82,17 +119,28 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
 
     if (renderData && (renderData.path || renderData.type === 'app_view')) {
         return (
-            <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-                <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
-                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{ fontSize: '18px' }}>◈</span> {renderData.title || 'V8 PLATINUM APP'}
-                    </span>
-                    <a href={renderData.path} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN FULLSCREEN ↗</a>
+            <div className="html-render-sandbox">
+                <div className="render-header">
+                    <div className="render-heading">
+                        <span className="render-title">
+                            <span className="render-title-icon">◈</span>
+                            {renderData.title || 'V8 PLATINUM APP'}
+                        </span>
+                        <span className="render-subtitle">Interactive sandbox preview ready in chat</span>
+                    </div>
+                    <div className="render-actions">
+                        <span className="render-badge">live preview</span>
+                        <a href={renderData.path} target="_blank" rel="noreferrer" className="render-open-link">OPEN FULLSCREEN ↗</a>
+                    </div>
+                </div>
+                <div className="render-meta">
+                    <span className="render-meta-label">Source</span>
+                    <span className="render-meta-value">{renderData.path}</span>
                 </div>
                 <iframe
                     src={renderData.path}
                     title={renderData.title}
-                    style={{ width: '100%', height: '600px', border: 'none', background: '#000' }}
+                    className="render-frame"
                     sandbox="allow-scripts allow-popups allow-same-origin"
                 />
             </div>
@@ -112,7 +160,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                     }]
                 ]}
                 components={{
-                    code({ inline, className, children, ...props }: any) {
+                    code({ inline, className, children, ...props }: React.ComponentProps<'code'> & { inline?: boolean }) {
                         const match = /language-(\w+)/.exec(className || '');
                         const language = match ? match[1] : '';
                         const codeString = String(children).replace(/\n$/, '');
@@ -127,7 +175,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
 
                         return <CodeBlock language={language} code={codeString} />;
                     },
-                    table({ children, ...props }: any) {
+                    table({ children, ...props }: React.ComponentProps<'table'>) {
                         return (
                             <div style={{ overflowX: 'auto', margin: '1em 0' }}>
                                 <table {...props}>{children}</table>
@@ -149,6 +197,19 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
     // Modular Live View logic: currently HTML and SVG are natively supported in the DOM.
     // Can be easily expanded to JSON visualizations, charts, etc.
     const isPreviewable = ['html', 'svg'].includes(language?.toLowerCase());
+    const previewMarkup = useMemo(() => {
+        if (!isPreviewable) return '';
+
+        const previewLanguage = language?.toLowerCase();
+        const sanitizedMarkup = DOMPurify.sanitize(
+            code,
+            previewLanguage === 'svg'
+                ? SAFE_SVG_PREVIEW_CONFIG
+                : SAFE_HTML_PREVIEW_CONFIG
+        );
+
+        return buildPreviewDocument(previewLanguage || '', sanitizedMarkup);
+    }, [code, isPreviewable, language]);
 
     const copyToClipboard = () => {
         navigator.clipboard.writeText(code);
@@ -157,21 +218,24 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
     };
 
     return (
-        <div className="code-block-container" style={{ position: 'relative', margin: '1em 0', borderRadius: '4px', overflow: 'hidden', border: '1px solid var(--border)' }}>
-            <div className="code-block-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 12px', background: 'var(--surface2, #1e1e1e)', color: 'var(--text-dim, #a0a0a0)', fontSize: '11px', fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                <span>{language}</span>
-                <div style={{ display: 'flex', gap: '12px' }}>
+        <div className="code-block-container">
+            <div className="code-block-header">
+                <div className="code-block-language">
+                    <span>{language}</span>
+                    {isPreviewable && <span className="code-block-pill">preview available</span>}
+                </div>
+                <div className="code-block-actions">
                     {isPreviewable && (
                         <button
                             onClick={() => setShowPreview(!showPreview)}
-                            style={{ background: 'none', border: 'none', color: showPreview ? 'var(--primary, #fff)' : 'inherit', cursor: 'pointer', fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }}
+                            className={`code-block-action ${showPreview ? 'active' : ''}`}
                         >
                             {showPreview ? 'CODE' : 'LIVE VIEW'}
                         </button>
                     )}
                     <button
                         onClick={copyToClipboard}
-                        style={{ background: 'none', border: 'none', color: copied ? '#4caf50' : 'inherit', cursor: 'pointer', fontSize: 'inherit', fontFamily: 'inherit', padding: 0 }}
+                        className={`code-block-action ${copied ? 'copied' : ''}`}
                     >
                         {copied ? 'COPIED!' : 'COPY'}
                     </button>
@@ -179,14 +243,18 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
             </div>
 
             {showPreview ? (
-                <div
-                    className="code-preview-area"
-                    style={{ padding: '16px', background: '#fff', color: '#000', overflowX: 'auto' }}
-                    dangerouslySetInnerHTML={{ __html: code }}
-                />
+                <div className="code-preview-shell">
+                    <div className="code-preview-note">Sandboxed live preview</div>
+                    <iframe
+                        className="code-preview-frame"
+                        sandbox="allow-scripts"
+                        srcDoc={previewMarkup}
+                        title={`${language} live preview`}
+                    />
+                </div>
             ) : (
                 <SyntaxHighlighter
-                    style={vscDarkPlus as any}
+                    style={vscDarkPlus}
                     language={language}
                     PreTag="div"
                     customStyle={{ margin: 0, borderRadius: 0, fontSize: '13px', background: '#0d0d0d' }}

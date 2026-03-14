@@ -601,6 +601,7 @@ a:hover {
   display: flex;
   align-items: center;
   padding: 8px 12px;
+  gap: 10px;
   cursor: pointer;
   user-select: none;
   background: rgba(255, 255, 255, 0.03);
@@ -619,7 +620,9 @@ a:hover {
 .tool-text {
   flex: 1;
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
 }
 
 .tool-label {
@@ -634,10 +637,53 @@ a:hover {
   font-family: var(--mono);
 }
 
+.tool-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tool-summary {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.tool-state-badge {
+  flex-shrink: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.tool-state-badge.call {
+  border-color: rgba(255, 184, 0, 0.25);
+  color: var(--warn);
+}
+
+.tool-state-badge.result {
+  border-color: rgba(0, 255, 133, 0.2);
+  color: var(--accent);
+}
+
+.tool-state-badge.error {
+  border-color: rgba(255, 68, 68, 0.25);
+  color: var(--error);
+}
+
 .tool-toggle {
   opacity: 0.4;
   font-size: 10px;
-  margin-left: 8px;
+  margin-left: 2px;
+  flex-shrink: 0;
 }
 
 /* V8 PLATINUM TOOL EVENTS */
@@ -765,6 +811,10 @@ a:hover {
   font-size: 12px;
 }
 
+.tool-event.previewable .tool-details {
+  padding-top: 6px;
+}
+
 .tool-event.call {
   border-color: rgba(255, 184, 0, 0.2);
   color: var(--warn);
@@ -811,7 +861,7 @@ a:hover {
 
 .tool-text {
   font-family: var(--mono);
-  word-break: break-all;
+  word-break: break-word;
 }
 
 .tool-name {
@@ -2404,6 +2454,187 @@ textarea::placeholder {
 .fetch-result-viewer {
   isolation: isolate;
   contain: layout style;
+}
+
+.html-render-sandbox {
+  margin: 1em 0;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  background: #000;
+}
+
+.render-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #0a0a0a;
+  border-bottom: 1px solid var(--border);
+}
+
+.render-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.render-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--primary);
+  letter-spacing: 0.02em;
+}
+
+.render-title-icon {
+  font-size: 18px;
+}
+
+.render-subtitle {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.render-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.render-badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 133, 0.2);
+  color: var(--accent);
+  background: rgba(0, 255, 133, 0.08);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.render-open-link {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-decoration: none;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.render-open-link:hover {
+  color: var(--primary);
+}
+
+.render-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.02);
+  font-size: 11px;
+}
+
+.render-meta-label {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.render-meta-value {
+  min-width: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.render-frame {
+  width: 100%;
+  height: 600px;
+  border: none;
+  background: #000;
+  display: block;
+}
+
+.code-block-container {
+  position: relative;
+  margin: 1em 0;
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  background: var(--surface2, #1e1e1e);
+  color: var(--text-dim, #a0a0a0);
+  font-size: 11px;
+  font-family: var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.code-block-language,
+.code-block-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.code-block-pill {
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 133, 0.2);
+  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.code-block-action {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font-size: inherit;
+  font-family: inherit;
+  padding: 0;
+}
+
+.code-block-action.active {
+  color: var(--primary);
+}
+
+.code-block-action.copied {
+  color: #4caf50;
+}
+
+.code-preview-shell {
+  background: #0d0d0d;
+}
+
+.code-preview-note {
+  padding: 10px 16px 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.code-preview-frame {
+  width: 100%;
+  min-height: 320px;
+  border: none;
+  background: #ffffff;
+  display: block;
 }
 
 /* Code blocks inside rich content areas must not affect global styles */
