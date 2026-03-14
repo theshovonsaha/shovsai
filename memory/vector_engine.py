@@ -35,11 +35,11 @@ class VectorEngine:
             resp.raise_for_status()
             return resp.json()["embedding"]
 
-    def _generate_id(self, anchor: str) -> str:
-        return hashlib.sha256(anchor.encode()).hexdigest()
+    def _generate_id(self, key: str, anchor: str) -> str:
+        return hashlib.sha256(f"{key}\n{anchor}".encode()).hexdigest()
 
     async def index(self, key: str, anchor: str, metadata: Optional[dict] = None):
-        doc_id = self._generate_id(anchor)
+        doc_id = self._generate_id(key, anchor)
         embedding = await self._get_embedding(key)
         meta = metadata or {}
         meta["key"] = key
