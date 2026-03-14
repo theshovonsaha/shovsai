@@ -40,13 +40,30 @@ TOKEN_SAFETY_LIMITS: dict[str, int] = {
     "_default":                16_000, 
 }
 
+def _get_token_encoding():
+    """
+    Resolve a safe tokenizer without raising.
+    Falls back to a minimal char-based encoder if tiktoken mappings are unavailable.
+    """
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        try:
+            return tiktoken.encoding_for_model("gpt-4o-mini")
+        except Exception:
+            class _FallbackEncoding:
+                @staticmethod
+                def encode(text: str):
+                    return list(text or "")
+
+                @staticmethod
+                def decode(tokens):
+                    return "".join(tokens)
+            return _FallbackEncoding()
+
 def _truncate_for_model(content: str, model: str) -> str:
     """Truncate tool result to fit within the model's token context limit."""
-    # We use cl100k_base as a general-purpose tokenizer (used by GPT-4 and many others)
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception:
-        encoding = tiktoken.get_encoding("gpt-4")
+    encoding = _get_token_encoding()
         
     limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
     # Tool results should only take up at most 70% of the total budget 
@@ -71,10 +88,7 @@ def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
     Ensure the total token count of the message list fits within the model's safety limit.
     If not, iteratively drops or truncates the sliding window/system context.
     """
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception:
-        encoding = tiktoken.get_encoding("gpt-4")
+    encoding = _get_token_encoding()
 
     limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
     
@@ -330,11 +344,34 @@ class AgentCore:
                 log("agent", sid, "Planner active · determining strategy...", level="info")
                 # Use override planner_model if provided
                 use_p_model = planner_model or clean_model
-                planned_tools = await self.orch.plan(user_message, self.tools.list_tools(), model=use_p_model)
+                if hasattr(self.orch, "plan_with_context"):
+                    structured_plan = await self.orch.plan_with_context(
+                        query=user_message,
+                        tools_list=self.tools.list_tools(),
+                        model=use_p_model,
+                        session_has_history=bool(getattr(session, "full_history", [])),
+                        current_fact_count=len(current_facts),
+                        failed_tools=self.circuit_breaker.get_failed_tools(sid),
+                    )
+                    planned_tools = [
+                        t.get("name")
+                        for t in structured_plan.get("tools", [])
+                        if isinstance(t, dict) and isinstance(t.get("name"), str)
+                    ]
+                else:
+                    planned_tools = await self.orch.plan(user_message, self.tools.list_tools(), model=use_p_model)
+                    structured_plan = {
+                        "strategy": f"Using {', '.join(planned_tools)} to resolve query.",
+                        "tools": [{"name": name, "priority": "medium", "reason": "legacy planner"} for name in planned_tools],
+                        "force_memory": False,
+                        "confidence": None,
+                    }
                 if planned_tools:
-                    strategy = f"Strategy: Using {', '.join(planned_tools)} to resolve query."
-                    yield _ev("plan", strategy=strategy, tools=planned_tools)
+                    strategy = structured_plan.get("strategy") or f"Using {', '.join(planned_tools)} to resolve query."
+                    yield _ev("plan", strategy=strategy, tools=planned_tools, confidence=structured_plan.get("confidence"))
                     forced_tools = planned_tools
+                if structured_plan.get("force_memory"):
+                    force_memory = True
             elif not use_planner:
                 log("agent", sid, "Planner bypassed (Direct Mode)")
 
@@ -767,6 +804,23 @@ class AgentCore:
             combined_results = []
             
             for call in calls:
+                if self.circuit_breaker.is_open(sid, call.tool_name):
+                    from plugins.tool_registry import ToolResult
+                    result = ToolResult(
+                        tool_name=call.tool_name,
+                        success=False,
+                        content=(
+                            f"Circuit breaker is OPEN for '{call.tool_name}'. "
+                            "Choose an alternative tool."
+                        ),
+                    )
+                    combined_results.append(
+                        f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n{result.content}\n</SYSTEM_TOOL_RESULT>"
+                        f"{self.circuit_breaker.get_pivot_message(call.tool_name)}"
+                    )
+                    yield _ev("tool_result", tool_name=call.tool_name, success=False, content=result.content)
+                    continue
+
                 if call.tool_name == "web_search":
                     if search_backend and search_backend != "auto":
                         call.arguments["backend"] = search_backend
@@ -779,9 +833,19 @@ class AgentCore:
                 yield _ev("tool_running", tool_name=call.tool_name)
                 # Pass context (session_id, agent_id) to tool execution for hierarchy support
                 context = {"_session_id": sid, "_agent_id": agent_id}
+                validation_error = self.tools.validate_tool_call(call)
+                if validation_error:
+                    from plugins.tool_registry import ToolResult
+                    result = ToolResult(
+                        tool_name=call.tool_name,
+                        success=False,
+                        content=f"Tool validation failed: {validation_error}",
+                    )
+                else:
+                    result = None
                 
                 # Use GuardrailMiddleware if available
-                if self.middleware:
+                if result is None and self.middleware:
                     async for event in self.middleware.execute_stream(
                         call,
                         session_id = sid,
@@ -811,7 +875,7 @@ class AgentCore:
                                 content   = event["content"],
                             )
                             break
-                else:
+                elif result is None:
                     result = await self.tools.execute(call, context=context)
 
                 if result.success:
@@ -917,10 +981,11 @@ class AgentCore:
         ]
 
         if forced_tools:
-            tools_str = ", ".join(forced_tools)
+            tools_lines = "\n".join(f"{i+1}. {name}" for i, name in enumerate(forced_tools))
             parts.append(
                 "--- TOOL OVERRIDE ---\n"
-                f"COMMAND: You MUST use the following tools immediately to answer this query: {tools_str}\n"
+                "COMMAND: You MUST use the following tools in this exact order before finalizing your answer:\n"
+                f"{tools_lines}\n"
                 "Do not provide a final answer until you have processed the results from these tools.\n"
                 "--- END OVERRIDE ---"
             )

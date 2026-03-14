@@ -1006,16 +1006,36 @@ STORE_MEMORY_TOOL = Tool(
     tags=["memory", "core"]
 )
 
-async def _query_memory(topic: str) -> str:
+async def _query_memory(topic: str, _session_id: Optional[str] = None) -> str:
     """Traverse the semantic graph memory for facts related to a topic."""
     from memory.semantic_graph import SemanticGraph
     try:
         graph = SemanticGraph()
         results = await graph.traverse(topic, top_k=5)
-        if not results:
+        deterministic_facts = []
+        if _session_id:
+            deterministic_facts = graph.get_current_facts(_session_id)
+            if deterministic_facts:
+                topic_l = topic.lower()
+                filtered = []
+                for s, p, o in deterministic_facts:
+                    joined = f"{s} {p} {o}".lower()
+                    if topic_l in joined or any(tok in joined for tok in topic_l.split()):
+                        filtered.append((s, p, o))
+                if filtered:
+                    deterministic_facts = filtered
+
+        if not results and not deterministic_facts:
             return f"No memories found related to '{topic}'."
         
-        lines = [f"Found {len(results)} relevant memories:"]
+        lines = []
+        if deterministic_facts:
+            lines.append(f"Session facts ({len(deterministic_facts)}):")
+            for s, p, o in deterministic_facts[:5]:
+                lines.append(f"  - [{s}] --[{p}]--> [{o}]")
+            lines.append("")
+
+        lines.append(f"Found {len(results)} relevant memories:")
         for r in results:
             lines.append(f"  - [{r['subject']}] --[{r['predicate']}]--> [{r['object']}]  (confidence: {r['similarity']})")
         return "\n".join(lines)

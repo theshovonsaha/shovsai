@@ -222,6 +222,62 @@ class ToolRegistry:
                 ))
         return calls
 
+    def validate_tool_call(self, call: ToolCall) -> Optional[str]:
+        """
+        Perform lightweight schema validation before execution.
+        Returns None when valid, otherwise a human-readable validation error.
+        """
+        tool = self._tools.get(call.tool_name)
+        if not tool:
+            return f"Tool '{call.tool_name}' is not registered."
+
+        schema = tool.parameters or {}
+        properties = schema.get("properties", {}) if isinstance(schema, dict) else {}
+        required = schema.get("required", []) if isinstance(schema, dict) else []
+        args = call.arguments or {}
+
+        if not isinstance(args, dict):
+            return "Tool arguments must be a JSON object."
+
+        for req_name in required:
+            value = args.get(req_name, None)
+            if value is None:
+                return f"Missing required argument '{req_name}'."
+            if isinstance(value, str) and not value.strip():
+                return f"Required argument '{req_name}' cannot be empty."
+
+        type_map = {
+            "string": str,
+            "integer": int,
+            "number": (int, float),
+            "boolean": bool,
+            "object": dict,
+            "array": list,
+        }
+        for arg_name, value in args.items():
+            if arg_name not in properties:
+                continue
+            expected_type_name = properties[arg_name].get("type")
+            expected_type = type_map.get(expected_type_name)
+            if expected_type and not isinstance(value, expected_type):
+                return (
+                    f"Argument '{arg_name}' must be of type '{expected_type_name}', "
+                    f"got '{type(value).__name__}'."
+                )
+
+        # Tool-specific guardrails
+        if call.tool_name == "bash":
+            command = args.get("command")
+            if not isinstance(command, str) or not command.strip():
+                return "Argument 'command' must be a non-empty string."
+
+        if call.tool_name in {"file_view", "file_create", "file_str_replace"}:
+            path_like = args.get("path") or args.get("filename")
+            if path_like is not None and (not isinstance(path_like, str) or not path_like.strip()):
+                return "File path argument must be a non-empty string."
+
+        return None
+
 
     async def execute(self, call: ToolCall, context: Optional[dict] = None) -> ToolResult:
         """Execute a tool call and return a ToolResult."""
