@@ -81,6 +81,52 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         );
     }
 
+    if (renderData && renderData.type === 'markdown_preview' && typeof renderData.content === 'string') {
+        return <RichContentViewer content={renderData.content} />;
+    }
+
+    if (
+        renderData
+        && (
+            renderData.type === 'pdf_preview'
+            || (typeof renderData.url === 'string' && renderData.url.toLowerCase().endsWith('.pdf'))
+            || (typeof renderData.path === 'string' && renderData.path.toLowerCase().endsWith('.pdf'))
+            || (typeof renderData.file === 'string' && renderData.file.toLowerCase().endsWith('.pdf'))
+        )
+    ) {
+        const rawPdfPath = typeof renderData.url === 'string'
+            ? renderData.url
+            : (typeof renderData.path === 'string'
+                ? renderData.path
+                : (typeof renderData.file === 'string' ? `/sandbox/${renderData.file}` : ''));
+        const pdfPath = rawPdfPath ? encodeURI(rawPdfPath) : '';
+        if (!pdfPath) {
+            return (
+                <div className="pdf-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>PDF Preview unavailable</div>
+                    <div style={{ fontSize: '13px', opacity: 0.8 }}>
+                        The PDF preview path is missing from the tool response.
+                    </div>
+                </div>
+            );
+        }
+        return (
+            <div className="pdf-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px' }}>▣</span> {renderData.title || 'PDF PREVIEW'}
+                    </span>
+                    <a href={pdfPath} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN PDF ↗</a>
+                </div>
+                <iframe
+                    src={pdfPath}
+                    title={renderData.title || 'PDF Preview'}
+                    style={{ width: '100%', height: '720px', border: 'none', background: '#111' }}
+                />
+            </div>
+        );
+    }
+
     if (renderData && (renderData.path || renderData.type === 'app_view')) {
         const appPath = typeof renderData.path === 'string' ? encodeURI(renderData.path) : '';
         if (!appPath) {

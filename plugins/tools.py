@@ -1201,6 +1201,20 @@ async def _pdf_processor(
     Actions: read, create, merge, split, rotate, metadata.
     """
     try:
+        def _pdf_preview_payload(pdf_path: str, action_name: str, **extra) -> str:
+            rel = str(Path(pdf_path).as_posix()).lstrip("/")
+            payload = {
+                "status": "success",
+                "action": action_name,
+                "type": "pdf_preview",
+                "file": rel,
+                "path": f"/sandbox/{rel}",
+                "url": f"/sandbox/{rel}",
+                "title": Path(rel).name,
+            }
+            payload.update(extra)
+            return json.dumps(payload)
+
         if action == "create":
             if not output_path or not content:
                 return "Error: 'output_path' and 'content' required for create."
@@ -1220,7 +1234,7 @@ async def _pdf_processor(
                 c.drawString(100, y, line)
                 y -= 15
             c.save()
-            return json.dumps({"status": "success", "file": output_path, "action": "create"})
+            return _pdf_preview_payload(output_path, "create")
 
         if action == "read":
             if not path: return "Error: 'path' required for read."
@@ -1233,7 +1247,12 @@ async def _pdf_processor(
                     text = ""
                     for page in pdf.pages:
                         text += page.extract_text() or ""
-                    return json.dumps({"status": "success", "content": text, "pages": len(pdf.pages)})
+                    return _pdf_preview_payload(
+                        path,
+                        "read",
+                        content=text,
+                        pages=len(pdf.pages),
+                    )
             except ImportError:
                 # Fallback to pypdf
                 try:
@@ -1242,7 +1261,13 @@ async def _pdf_processor(
                     text = ""
                     for page in reader.pages:
                         text += page.extract_text() or ""
-                    return json.dumps({"status": "success", "content": text, "pages": len(reader.pages), "note": "using pypdf fallback"})
+                    return _pdf_preview_payload(
+                        path,
+                        "read",
+                        content=text,
+                        pages=len(reader.pages),
+                        note="using pypdf fallback",
+                    )
                 except ImportError:
                     return "Error: 'pypdf' or 'pdfplumber' missing."
 
@@ -1258,7 +1283,7 @@ async def _pdf_processor(
                 target = _safe_path(output_path)
                 with open(target, "wb") as f:
                     writer.write(f)
-                return json.dumps({"status": "success", "file": output_path, "action": "merge"})
+                return _pdf_preview_payload(output_path, "merge")
             except ImportError:
                 return "Error: 'pypdf' library missing."
 
