@@ -177,7 +177,7 @@ async def _web_search(query: str, num_results: int = 8, backend: str = None, sea
             engine = "duckduckgo"
             results = await _search_duckduckgo(query, num_results)
             
-        return _format_search_results(query, results, engine=engine) if results else f"No results found for: {query} via {engine}."
+        return _format_search_results(query, results, engine=engine, max_results=num_results) if results else f"No results found for: {query} via {engine}."
     except Exception as e:
         return f"web_search ({engine}) error: {e}"
 
@@ -219,8 +219,8 @@ def _normalize_search_results(results: list[dict], max_results: int = 8) -> list
     return normalized
 
 
-def _format_search_results(query: str, results: list[dict], engine: str = "unknown") -> str:
-    cleaned = _normalize_search_results(results, max_results=max(1, len(results or [])))
+def _format_search_results(query: str, results: list[dict], engine: str = "unknown", max_results: int = 8) -> str:
+    cleaned = _normalize_search_results(results, max_results=max(1, max_results))
     context_summary = "\n".join(f"- {item['snippet']}" for item in cleaned[:3])
     return json.dumps({
         "type": "web_search_results",
