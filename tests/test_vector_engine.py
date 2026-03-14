@@ -17,6 +17,7 @@ async def test_vector_engine_anchored_retrieval():
     # Keep this as a deterministic unit test by mocking embeddings.
     with patch.object(VectorEngine, "_get_embedding", new=AsyncMock(return_value=[0.1] * 768)):
         ve = VectorEngine(session_id="test_session")
+        await ve.clear()
 
         # 1. Index a "Key" anchored to a "Raw Turn"
         key = "User preference: Strictly uses dark mode for all UI components"
@@ -32,18 +33,38 @@ async def test_vector_engine_anchored_retrieval():
         assert results[0]["anchor"] == anchor
 
 @pytest.mark.asyncio
-async def test_vector_engine_uniqueness():
+async def test_vector_engine_multi_key_same_anchor():
     """
-    RED TEST: Should prevent duplicate indexing of identical anchors.
+    Should preserve key→anchor relationships for multiple keys sharing one anchor.
     """
     from memory.vector_engine import VectorEngine
 
     with patch.object(VectorEngine, "_get_embedding", new=AsyncMock(return_value=[0.1] * 768)):
         ve = VectorEngine(session_id="test_session_unique")
+        await ve.clear()
 
         anchor = "Static conversation turn"
         await ve.index(key="key1", anchor=anchor)
-        await ve.index(key="key2", anchor=anchor) # Same anchor
+        await ve.index(key="key2", anchor=anchor)  # Same anchor, different key
 
         count = await ve.count()
-        assert count == 1 # Second one should have been skipped or updated
+        assert count == 2
+
+
+@pytest.mark.asyncio
+async def test_vector_engine_uniqueness():
+    """
+    Should prevent duplicate indexing of identical key+anchor pairs.
+    """
+    from memory.vector_engine import VectorEngine
+
+    with patch.object(VectorEngine, "_get_embedding", new=AsyncMock(return_value=[0.1] * 768)):
+        ve = VectorEngine(session_id="test_session_unique_exact")
+        await ve.clear()
+
+        anchor = "Static conversation turn"
+        await ve.index(key="key1", anchor=anchor)
+        await ve.index(key="key1", anchor=anchor)
+
+        count = await ve.count()
+        assert count == 1
