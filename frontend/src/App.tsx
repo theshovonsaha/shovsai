@@ -9,6 +9,19 @@ import { ShovsView } from './components/ShovsView';
 import { OptionsPanel } from './components/OptionsPanel';
 import { GuardrailConfirmationModal } from './components/GuardrailConfirmationModal';
 
+const MAX_TOOL_SUMMARY_LENGTH = 84;
+const TRUNCATED_TOOL_SUMMARY_LENGTH = MAX_TOOL_SUMMARY_LENGTH - 3;
+
+const truncateToolSummary = (content: string) => {
+  if (content.length <= MAX_TOOL_SUMMARY_LENGTH) {
+    return content;
+  }
+
+  const truncated = content.slice(0, TRUNCATED_TOOL_SUMMARY_LENGTH);
+  const boundary = truncated.lastIndexOf(' ');
+  return `${(boundary > 24 ? truncated.slice(0, boundary) : truncated).trimEnd()}…`;
+};
+
 const parseToolPayload = (content?: string) => {
   if (!content) return null;
 
@@ -47,7 +60,7 @@ const summarizeToolContent = (type: 'call' | 'result' | 'error', content?: strin
     summary = payload.title || payload.path || 'Interactive sandbox preview';
     autoExpand = true;
   } else if (content) {
-    summary = content.length > 84 ? `${content.slice(0, 81)}…` : content;
+    summary = truncateToolSummary(content);
   }
 
   return { label, summary, autoExpand };

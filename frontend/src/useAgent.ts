@@ -1,13 +1,14 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 
 const TOOL_ARG_PRIORITY = ['query', 'url', 'path', 'title', 'filename', 'language', 'command', 'prompt'];
+const CONTENT_SIZE_SUMMARY_KEYS = ['code', 'html', 'content', 'svg', 'script', 'css', 'markup'];
 
 const formatToolArgumentValue = (key: string, value: unknown): string => {
     if (typeof value === 'string') {
         const normalized = value.replace(/\s+/g, ' ').trim();
         if (!normalized) return 'empty';
 
-        if (['code', 'html', 'content', 'svg', 'script', 'css', 'markup'].some(token => key.toLowerCase().includes(token))) {
+        if (CONTENT_SIZE_SUMMARY_KEYS.some(token => key.toLowerCase().includes(token))) {
             return `${normalized.length} chars`;
         }
 
@@ -19,7 +20,8 @@ const formatToolArgumentValue = (key: string, value: unknown): string => {
     }
 
     if (value && typeof value === 'object') {
-        return `${Object.keys(value as Record<string, unknown>).length} field${Object.keys(value as Record<string, unknown>).length === 1 ? '' : 's'}`;
+        const fieldCount = Object.keys(value as Record<string, unknown>).length;
+        return `${fieldCount} field${fieldCount === 1 ? '' : 's'}`;
     }
 
     return String(value);

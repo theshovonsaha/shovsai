@@ -19,6 +19,33 @@ interface WebSearchResult {
     snippet: string;
 }
 
+const FORBIDDEN_PREVIEW_ATTRIBUTES = ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onmouseenter', 'onmouseleave', 'onchange', 'onsubmit'];
+const SAFE_HTML_PREVIEW_CONFIG = {
+    USE_PROFILES: { html: true },
+    FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'link', 'meta'],
+    FORBID_ATTR: FORBIDDEN_PREVIEW_ATTRIBUTES,
+};
+const SAFE_SVG_PREVIEW_CONFIG = {
+    USE_PROFILES: { svg: true, svgFilters: true },
+    FORBID_TAGS: ['script', 'foreignObject'],
+    FORBID_ATTR: FORBIDDEN_PREVIEW_ATTRIBUTES,
+};
+
+const buildPreviewDocument = (language: string, sanitizedMarkup: string) => {
+    if (language === 'svg') {
+        return [
+            '<!doctype html>',
+            '<html>',
+            '<body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:#ffffff;">',
+            sanitizedMarkup,
+            '</body>',
+            '</html>',
+        ].join('');
+    }
+
+    return sanitizedMarkup;
+};
+
 const tryParseStructuredContent = (content: string) => {
     try {
         const trimmed = content.trim();
@@ -55,7 +82,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                     Results for: <span style={{ color: 'var(--primary)' }}>{renderData.query}</span>
                 </div>
                 {renderData.results.map((r: WebSearchResult, i: number) => (
-                    <div key={i} className="search-card" style={{ background: 'var(--surface2, #1e1e1e)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                    <div key={`${i}-${r.url}`} className="search-card" style={{ background: 'var(--surface2, #1e1e1e)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                         <a href={r.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none', fontSize: '14px', display: 'block', marginBottom: '4px' }}>
                             {r.title}
                         </a>
@@ -177,15 +204,11 @@ const CodeBlock = ({ language, code }: { language: string; code: string }) => {
         const sanitizedMarkup = DOMPurify.sanitize(
             code,
             previewLanguage === 'svg'
-                ? { USE_PROFILES: { svg: true, svgFilters: true } }
-                : { USE_PROFILES: { html: true } }
+                ? SAFE_SVG_PREVIEW_CONFIG
+                : SAFE_HTML_PREVIEW_CONFIG
         );
 
-        if (previewLanguage === 'svg') {
-            return `<!doctype html><html><body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:#ffffff;">${sanitizedMarkup}</body></html>`;
-        }
-
-        return sanitizedMarkup;
+        return buildPreviewDocument(previewLanguage || '', sanitizedMarkup);
     }, [code, isPreviewable, language]);
 
     const copyToClipboard = () => {
