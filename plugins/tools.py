@@ -177,18 +177,57 @@ async def _web_search(query: str, num_results: int = 8, backend: str = None, sea
             engine = "duckduckgo"
             results = await _search_duckduckgo(query, num_results)
             
-        return _format_search_results(query, results) if results else f"No results found for: {query} via {engine}."
+        return _format_search_results(query, results, engine=engine, max_results=num_results) if results else f"No results found for: {query} via {engine}."
     except Exception as e:
         return f"web_search ({engine}) error: {e}"
 
 
-def _format_search_results(query: str, results: list[dict]) -> str:
-    # We return a structured JSON string so the frontend can render nice cards.
-    # We include a brief text prefix so the LLM knows what happened immediately.
+def _normalize_search_results(results: list[dict], max_results: int = 8) -> list[dict]:
+    """Normalize and de-duplicate raw search results for better context quality."""
+    normalized: list[dict] = []
+    seen_urls: set[str] = set()
+
+    for r in results or []:
+        title = str(r.get("title", "")).strip()
+        url = str(r.get("url", "")).strip()
+        snippet = str(r.get("snippet", "")).strip()
+        source = str(r.get("source", "")).strip()
+
+        if not title and not snippet:
+            continue
+        if not snippet:
+            snippet = title
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        if len(snippet) > 320:
+            snippet = snippet[:317].rstrip() + "..."
+
+        url_key = url.lower().rstrip("/")
+        if url_key and url_key in seen_urls:
+            continue
+        if url_key:
+            seen_urls.add(url_key)
+
+        normalized.append({
+            "title": title or "Untitled",
+            "url": url,
+            "snippet": snippet,
+            "source": source,
+        })
+        if len(normalized) >= max_results:
+            break
+
+    return normalized
+
+
+def _format_search_results(query: str, results: list[dict], engine: str = "unknown", max_results: int = 8) -> str:
+    cleaned = _normalize_search_results(results, max_results=max(1, max_results))
+    context_summary = "\n".join(f"- {item['snippet']}" for item in cleaned[:3])
     return json.dumps({
         "type": "web_search_results",
         "query": query,
-        "results": results
+        "engine": engine,
+        "context_summary": context_summary,
+        "results": cleaned
     })
 
 
@@ -1006,16 +1045,42 @@ STORE_MEMORY_TOOL = Tool(
     tags=["memory", "core"]
 )
 
-async def _query_memory(topic: str) -> str:
+async def _query_memory(
+    topic: str,
+    session_id: Optional[str] = None,
+    **kwargs,
+) -> str:
     """Traverse the semantic graph memory for facts related to a topic."""
     from memory.semantic_graph import SemanticGraph
     try:
         graph = SemanticGraph()
         results = await graph.traverse(topic, top_k=5)
-        if not results:
+        deterministic_facts = []
+        active_session_id = session_id or kwargs.get("_session_id")
+        if active_session_id:
+            deterministic_facts = graph.get_current_facts(active_session_id)
+            if deterministic_facts:
+                topic_l = topic.lower()
+                topic_terms = {tok for tok in topic_l.split() if tok}
+                filtered = []
+                for s, p, o in deterministic_facts:
+                    joined = f"{s} {p} {o}".lower()
+                    if topic_l in joined or any(tok in joined for tok in topic_terms):
+                        filtered.append((s, p, o))
+                if filtered:
+                    deterministic_facts = filtered
+
+        if not results and not deterministic_facts:
             return f"No memories found related to '{topic}'."
         
-        lines = [f"Found {len(results)} relevant memories:"]
+        lines = []
+        if deterministic_facts:
+            lines.append(f"Session facts ({len(deterministic_facts)}):")
+            for s, p, o in deterministic_facts[:5]:
+                lines.append(f"  - [{s}] --[{p}]--> [{o}]")
+            lines.append("")
+
+        lines.append(f"Found {len(results)} relevant memories:")
         for r in results:
             lines.append(f"  - [{r['subject']}] --[{r['predicate']}]--> [{r['object']}]  (confidence: {r['similarity']})")
         return "\n".join(lines)
@@ -1136,6 +1201,20 @@ async def _pdf_processor(
     Actions: read, create, merge, split, rotate, metadata.
     """
     try:
+        def _pdf_preview_payload(pdf_path: str, action_name: str, **extra) -> str:
+            rel = str(Path(pdf_path).as_posix()).lstrip("/")
+            payload = {
+                "status": "success",
+                "action": action_name,
+                "type": "pdf_preview",
+                "file": rel,
+                "path": f"/sandbox/{rel}",
+                "url": f"/sandbox/{rel}",
+                "title": Path(rel).name,
+            }
+            payload.update(extra)
+            return json.dumps(payload)
+
         if action == "create":
             if not output_path or not content:
                 return "Error: 'output_path' and 'content' required for create."
@@ -1155,7 +1234,7 @@ async def _pdf_processor(
                 c.drawString(100, y, line)
                 y -= 15
             c.save()
-            return json.dumps({"status": "success", "file": output_path, "action": "create"})
+            return _pdf_preview_payload(output_path, "create")
 
         if action == "read":
             if not path: return "Error: 'path' required for read."
@@ -1168,7 +1247,12 @@ async def _pdf_processor(
                     text = ""
                     for page in pdf.pages:
                         text += page.extract_text() or ""
-                    return json.dumps({"status": "success", "content": text, "pages": len(pdf.pages)})
+                    return _pdf_preview_payload(
+                        path,
+                        "read",
+                        content=text,
+                        pages=len(pdf.pages),
+                    )
             except ImportError:
                 # Fallback to pypdf
                 try:
@@ -1177,7 +1261,13 @@ async def _pdf_processor(
                     text = ""
                     for page in reader.pages:
                         text += page.extract_text() or ""
-                    return json.dumps({"status": "success", "content": text, "pages": len(reader.pages), "note": "using pypdf fallback"})
+                    return _pdf_preview_payload(
+                        path,
+                        "read",
+                        content=text,
+                        pages=len(reader.pages),
+                        note="using pypdf fallback",
+                    )
                 except ImportError:
                     return "Error: 'pypdf' or 'pdfplumber' missing."
 
@@ -1193,7 +1283,7 @@ async def _pdf_processor(
                 target = _safe_path(output_path)
                 with open(target, "wb") as f:
                     writer.write(f)
-                return json.dumps({"status": "success", "file": output_path, "action": "merge"})
+                return _pdf_preview_payload(output_path, "merge")
             except ImportError:
                 return "Error: 'pypdf' library missing."
 

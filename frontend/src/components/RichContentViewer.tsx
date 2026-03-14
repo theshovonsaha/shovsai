@@ -117,28 +117,74 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         );
     }
 
-    if (renderData && (renderData.path || renderData.type === 'app_view')) {
-        return (
-            <div className="html-render-sandbox">
-                <div className="render-header">
-                    <div className="render-heading">
-                        <span className="render-title">
-                            <span className="render-title-icon">◈</span>
-                            {renderData.title || 'V8 PLATINUM APP'}
-                        </span>
-                        <span className="render-subtitle">Interactive sandbox preview ready in chat</span>
-                    </div>
-                    <div className="render-actions">
-                        <span className="render-badge">live preview</span>
-                        <a href={renderData.path} target="_blank" rel="noreferrer" className="render-open-link">OPEN FULLSCREEN ↗</a>
+    if (renderData && renderData.type === 'markdown_preview' && typeof renderData.content === 'string') {
+        return <RichContentViewer content={renderData.content} />;
+    }
+
+    if (
+        renderData
+        && (
+            renderData.type === 'pdf_preview'
+            || (typeof renderData.url === 'string' && renderData.url.toLowerCase().endsWith('.pdf'))
+            || (typeof renderData.path === 'string' && renderData.path.toLowerCase().endsWith('.pdf'))
+            || (typeof renderData.file === 'string' && renderData.file.toLowerCase().endsWith('.pdf'))
+        )
+    ) {
+        const rawPdfPath = typeof renderData.url === 'string'
+            ? renderData.url
+            : (typeof renderData.path === 'string'
+                ? renderData.path
+                : (typeof renderData.file === 'string' ? `/sandbox/${renderData.file}` : ''));
+        const pdfPath = rawPdfPath ? encodeURI(rawPdfPath) : '';
+        if (!pdfPath) {
+            return (
+                <div className="pdf-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>PDF Preview unavailable</div>
+                    <div style={{ fontSize: '13px', opacity: 0.8 }}>
+                        The PDF preview path is missing from the tool response.
                     </div>
                 </div>
-                <div className="render-meta">
-                    <span className="render-meta-label">Source</span>
-                    <span className="render-meta-value">{renderData.path}</span>
+            );
+        }
+        return (
+            <div className="pdf-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="rich-preview-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px' }}>▣</span> {renderData.title || 'PDF PREVIEW'}
+                    </span>
+                    <a href={pdfPath} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN PDF ↗</a>
                 </div>
                 <iframe
-                    src={renderData.path}
+                    src={pdfPath}
+                    title={renderData.title || 'PDF Preview'}
+                    style={{ width: '100%', height: '720px', border: 'none', background: '#111' }}
+                />
+            </div>
+        );
+    }
+
+    if (renderData && (renderData.path || renderData.type === 'app_view')) {
+        const appPath = typeof renderData.path === 'string' ? encodeURI(renderData.path) : '';
+        if (!appPath) {
+            return (
+                <div className="html-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                    <div style={{ fontWeight: 600, marginBottom: '8px' }}>HTML Preview unavailable</div>
+                    <div style={{ fontSize: '13px', opacity: 0.8 }}>
+                        The app preview path is missing from the tool response.
+                    </div>
+                </div>
+            );
+        }
+        return (
+            <div className="html-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="rich-preview-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{ fontSize: '18px' }}>◈</span> {renderData.title || 'V8 PLATINUM APP'}
+                    </span>
+                    <a href={appPath} target="_blank" rel="noreferrer" style={{ fontSize: '11px', color: 'var(--text-dim)', textDecoration: 'none', background: 'rgba(255,255,255,0.05)', padding: '4px 10px', borderRadius: '4px' }}>OPEN FULLSCREEN ↗</a>
+                </div>
+                <iframe
+                    src={appPath}
                     title={renderData.title}
                     className="render-frame"
                     sandbox="allow-scripts allow-popups allow-same-origin"

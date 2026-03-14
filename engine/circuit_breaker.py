@@ -6,7 +6,7 @@ If a tool fails N times consecutively, it 'opens' the circuit,
 preventing further execution and forcing a pivot.
 """
 
-from typing import Dict, Any
+from typing import Dict, List
 from config.logger import log
 
 class CircuitBreaker:
@@ -48,3 +48,11 @@ class CircuitBreaker:
             "Circuit breaker is OPEN. Stop attempting it. "
             "Explain the failure to the user and offer an alternative or proceed without it.]"
         )
+
+    def get_failed_tools(self, session_id: str) -> List[str]:
+        """Return tools that have at least one recorded failure in this session."""
+        return [
+            tool_name
+            for tool_name, count in self.failures.get(session_id, {}).items()
+            if count > 0
+        ]

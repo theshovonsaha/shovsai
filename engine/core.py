@@ -40,45 +40,61 @@ TOKEN_SAFETY_LIMITS: dict[str, int] = {
     "_default":                16_000, 
 }
 
+def _get_token_encoding():
+    """
+    Resolve a safe tokenizer without raising.
+    Falls back to a minimal char-based encoder if tiktoken mappings are unavailable.
+    """
+    try:
+        return tiktoken.get_encoding("cl100k_base")
+    except Exception:
+        try:
+            return tiktoken.get_encoding("o200k_base")
+        except Exception:
+            return None
+
 def _truncate_for_model(content: str, model: str) -> str:
     """Truncate tool result to fit within the model's token context limit."""
-    # We use cl100k_base as a general-purpose tokenizer (used by GPT-4 and many others)
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception:
-        encoding = tiktoken.get_encoding("gpt-4")
+    encoding = _get_token_encoding()
         
     limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
     # Tool results should only take up at most 70% of the total budget 
     # to leave room for history/system prompts.
     safe_tool_limit = int(limit * 0.70)
-    tokens = encoding.encode(content)
+    if encoding is None:
+        # Approximate 1 token ~= 4 chars if tokenizer isn't available.
+        safe_chars = safe_tool_limit * 4
+        if len(content) <= safe_chars:
+            return content
+        keep = int(safe_chars * 0.45)
+        prefix = content[:keep]
+        suffix = content[-keep:]
+    else:
+        tokens = encoding.encode(content)
+        if len(tokens) <= safe_tool_limit:
+            return content
+        keep = int(safe_tool_limit * 0.45)
+        prefix = encoding.decode(tokens[:keep])
+        suffix = encoding.decode(tokens[-keep:])
+        truncated_amount = len(tokens) - safe_tool_limit
+        return f"{prefix}\n\n[...Token Budget Exceeded: {truncated_amount} tokens truncated...]\n\n{suffix}"
     
-    if len(tokens) <= safe_tool_limit:
-        return content
-    
-    keep = safe_tool_limit // 2
-        
-    # Smart truncation: keep first 45% and last 45% of tokens
-    keep = int(safe_tool_limit * 0.45)
-    prefix = encoding.decode(tokens[:keep])
-    suffix = encoding.decode(tokens[-keep:])
-    
-    return f"{prefix}\n\n[...Token Budget Exceeded: {len(tokens) - safe_tool_limit} tokens truncated...]\n\n{suffix}"
+    truncated_amount = len(content) - safe_chars
+    return f"{prefix}\n\n[...Token Budget Exceeded: ~{truncated_amount} chars truncated...]\n\n{suffix}"
 
 def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
     """
     Ensure the total token count of the message list fits within the model's safety limit.
     If not, iteratively drops or truncates the sliding window/system context.
     """
-    try:
-        encoding = tiktoken.get_encoding("cl100k_base")
-    except Exception:
-        encoding = tiktoken.get_encoding("gpt-4")
+    encoding = _get_token_encoding()
 
     limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
     
     def total_tokens(msgs):
+        if encoding is None:
+            # Approximation fallback: ~1 token per 4 chars.
+            return sum(len(m.get("content", "")) // 4 for m in msgs)
         return sum(len(encoding.encode(m["content"])) for m in msgs)
 
     # If already safe, return
@@ -89,13 +105,22 @@ def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
 
     # 1. Truncate the combined system message (context/RAG/tools) first if it's huge
     if messages and messages[0]["role"] == "system":
-        sys_tokens = encoding.encode(messages[0]["content"])
-        if len(sys_tokens) > limit * 0.6:
-            # Keep first 30% and last 30% of system prompt
-            keep = int(limit * 0.3)
-            prefix = encoding.decode(sys_tokens[:keep])
-            suffix = encoding.decode(sys_tokens[-keep:])
-            messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
+        if encoding is None:
+            sys_content = messages[0]["content"]
+            sys_limit_chars = int(limit * 0.6) * 4
+            if len(sys_content) > sys_limit_chars:
+                keep_chars = int(limit * 0.3) * 4
+                prefix = sys_content[:keep_chars]
+                suffix = sys_content[-keep_chars:]
+                messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
+        else:
+            sys_tokens = encoding.encode(messages[0]["content"])
+            if len(sys_tokens) > limit * 0.6:
+                # Keep first 30% and last 30% of system prompt
+                keep = int(limit * 0.3)
+                prefix = encoding.decode(sys_tokens[:keep])
+                suffix = encoding.decode(sys_tokens[-keep:])
+                messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
 
     # 2. If still over, drop oldest non-user messages from sliding window (middle of list)
     # We keep the first system message (index 0) and the last user message (index -1)
@@ -225,6 +250,68 @@ class AgentCore:
         self.ctx_eng = self._v1_engine
         print("[AgentCore] Context engine: V1 (Linear Compression)")
 
+    def _direct_tool_hints(
+        self,
+        query: str,
+        *,
+        tools_list: list[dict],
+        session_has_history: bool,
+        current_fact_count: int,
+        failed_tools: Optional[list[str]] = None,
+    ) -> list[str]:
+        """Deterministic tool hints for direct mode when planner is disabled."""
+        available = {
+            t.get("name")
+            for t in tools_list
+            if isinstance(t, dict) and isinstance(t.get("name"), str)
+        }
+        failed = set(failed_tools or [])
+        q = (query or "").lower().strip()
+
+        if not q:
+            return []
+        if re.fullmatch(r"(hi|hello|hey|yo|thanks|thank you|ok|okay)[!. ]*", q):
+            return []
+
+        suggestions: list[str] = []
+
+        # Memory-first bias for ongoing conversations.
+        if (
+            (session_has_history or current_fact_count > 0)
+            and "query_memory" in available
+            and "query_memory" not in failed
+        ):
+            suggestions.append("query_memory")
+
+        if re.search(r"https?://", q):
+            if "web_fetch" in available and "web_fetch" not in failed:
+                suggestions.append("web_fetch")
+        elif re.search(r"\b(news|latest|current|today|who is|what is|when is|where is)\b", q):
+            if "web_search" in available and "web_search" not in failed:
+                suggestions.append("web_search")
+
+        if re.search(r"\b(weather|temperature|forecast)\b", q):
+            if "weather_fetch" in available and "weather_fetch" not in failed:
+                suggestions.append("weather_fetch")
+
+        if re.search(r"\b(image|photo|picture|logo)\b", q):
+            if "image_search" in available and "image_search" not in failed:
+                suggestions.append("image_search")
+
+        if re.search(r"\b(create|build|generate).*\b(html|dashboard|app|webpage)\b", q):
+            for candidate in ("generate_app", "file_create"):
+                if candidate in available and candidate not in failed:
+                    suggestions.append(candidate)
+                    break
+
+        ordered = []
+        seen = set()
+        for name in suggestions:
+            if name not in seen:
+                seen.add(name)
+                ordered.append(name)
+        return ordered
+
     async def chat_stream(
         self,
         user_message:   str,
@@ -324,19 +411,59 @@ class AgentCore:
                 log("rag", sid, "No relevant history anchors found")
 
             current_facts = self.graph.get_current_facts(sid)
+            failed_tools = self.circuit_breaker.get_failed_tools(sid)
 
             # ── Agentic Planning (Manager Agent) ──────────────────────────────
             if self.orch and use_planner and not forced_tools:
                 log("agent", sid, "Planner active · determining strategy...", level="info")
                 # Use override planner_model if provided
                 use_p_model = planner_model or clean_model
-                planned_tools = await self.orch.plan(user_message, self.tools.list_tools(), model=use_p_model)
+                if hasattr(self.orch, "plan_with_context"):
+                    structured_plan = await self.orch.plan_with_context(
+                        query=user_message,
+                        tools_list=self.tools.list_tools(),
+                        model=use_p_model,
+                        session_has_history=bool(getattr(session, "full_history", [])),
+                        current_fact_count=len(current_facts),
+                        failed_tools=failed_tools,
+                    )
+                    planned_tools = [
+                        t.get("name")
+                        for t in structured_plan.get("tools", [])
+                        if isinstance(t, dict) and isinstance(t.get("name"), str)
+                    ]
+                else:
+                    planned_tools = await self.orch.plan(user_message, self.tools.list_tools(), model=use_p_model)
+                    structured_plan = {
+                        "strategy": f"Using {', '.join(planned_tools)} to resolve query.",
+                        "tools": [{"name": name, "priority": "medium", "reason": "legacy planner"} for name in planned_tools],
+                        "force_memory": False,
+                        "confidence": None,
+                    }
                 if planned_tools:
-                    strategy = f"Strategy: Using {', '.join(planned_tools)} to resolve query."
-                    yield _ev("plan", strategy=strategy, tools=planned_tools)
+                    strategy = structured_plan.get("strategy") or f"Using {', '.join(planned_tools)} to resolve query."
+                    yield _ev("plan", strategy=strategy, tools=planned_tools, confidence=structured_plan.get("confidence"))
                     forced_tools = planned_tools
+                if structured_plan.get("force_memory"):
+                    force_memory = True
             elif not use_planner:
                 log("agent", sid, "Planner bypassed (Direct Mode)")
+                if not forced_tools:
+                    direct_tools = self._direct_tool_hints(
+                        user_message,
+                        tools_list=self.tools.list_tools(),
+                        session_has_history=bool(getattr(session, "full_history", [])),
+                        current_fact_count=len(current_facts),
+                        failed_tools=failed_tools,
+                    )
+                    if direct_tools:
+                        forced_tools = direct_tools
+                        yield _ev(
+                            "plan",
+                            strategy="Planner disabled; using direct-mode tool hints.",
+                            tools=direct_tools,
+                            confidence=0.35,
+                        )
 
             messages = self._build_messages(
                 system_prompt=session.system_prompt,
@@ -767,6 +894,23 @@ class AgentCore:
             combined_results = []
             
             for call in calls:
+                if self.circuit_breaker.is_open(sid, call.tool_name):
+                    from plugins.tool_registry import ToolResult
+                    result = ToolResult(
+                        tool_name=call.tool_name,
+                        success=False,
+                        content=(
+                            f"Circuit breaker is OPEN for '{call.tool_name}'. "
+                            "Choose an alternative tool."
+                        ),
+                    )
+                    combined_results.append(
+                        f"<SYSTEM_TOOL_RESULT name=\"{call.tool_name}\">\n{result.content}\n</SYSTEM_TOOL_RESULT>"
+                        f"{self.circuit_breaker.get_pivot_message(call.tool_name)}"
+                    )
+                    yield _ev("tool_result", tool_name=call.tool_name, success=False, content=result.content)
+                    continue
+
                 if call.tool_name == "web_search":
                     if search_backend and search_backend != "auto":
                         call.arguments["backend"] = search_backend
@@ -779,9 +923,19 @@ class AgentCore:
                 yield _ev("tool_running", tool_name=call.tool_name)
                 # Pass context (session_id, agent_id) to tool execution for hierarchy support
                 context = {"_session_id": sid, "_agent_id": agent_id}
+                validation_error = self.tools.validate_tool_call(call)
+                if validation_error:
+                    from plugins.tool_registry import ToolResult
+                    result = ToolResult(
+                        tool_name=call.tool_name,
+                        success=False,
+                        content=f"Tool validation failed: {validation_error}",
+                    )
+                else:
+                    result = None
                 
                 # Use GuardrailMiddleware if available
-                if self.middleware:
+                if result is None and self.middleware:
                     async for event in self.middleware.execute_stream(
                         call,
                         session_id = sid,
@@ -811,7 +965,7 @@ class AgentCore:
                                 content   = event["content"],
                             )
                             break
-                else:
+                elif result is None:
                     result = await self.tools.execute(call, context=context)
 
                 if result.success:
@@ -917,10 +1071,11 @@ class AgentCore:
         ]
 
         if forced_tools:
-            tools_str = ", ".join(forced_tools)
+            tools_lines = "\n".join(f"{i+1}. {name}" for i, name in enumerate(forced_tools))
             parts.append(
                 "--- TOOL OVERRIDE ---\n"
-                f"COMMAND: You MUST use the following tools immediately to answer this query: {tools_str}\n"
+                "COMMAND: Use the following tools in the order listed below when there are dependencies between them.\n"
+                f"{tools_lines}\n"
                 "Do not provide a final answer until you have processed the results from these tools.\n"
                 "--- END OVERRIDE ---"
             )

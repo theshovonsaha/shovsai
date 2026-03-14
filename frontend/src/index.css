@@ -2380,7 +2380,8 @@ textarea::placeholder {
     padding: 10px;
   }
 
-  .html-render-sandbox iframe {
+  .html-render-sandbox iframe,
+  .pdf-render-sandbox iframe {
     height: 350px !important;
   }
 
@@ -2451,115 +2452,31 @@ textarea::placeholder {
    ══════════════════════════════════════════════════════════════════ */
 
 .html-render-sandbox,
+.pdf-render-sandbox,
 .fetch-result-viewer {
   isolation: isolate;
   contain: layout style;
 }
 
-.html-render-sandbox {
-  margin: 1em 0;
-  border-radius: 12px;
+.rich-preview-sandbox {
+  max-width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-  background: #000;
 }
 
-.render-header {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 20px;
-  background: #0a0a0a;
-  border-bottom: 1px solid var(--border);
-}
-
-.render-heading {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.render-title {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 700;
-  font-size: 13px;
-  color: var(--primary);
-  letter-spacing: 0.02em;
-}
-
-.render-title-icon {
-  font-size: 18px;
-}
-
-.render-subtitle {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.render-actions {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.render-badge {
-  padding: 4px 8px;
-  border-radius: 999px;
-  border: 1px solid rgba(0, 255, 133, 0.2);
-  color: var(--accent);
-  background: rgba(0, 255, 133, 0.08);
-  font-size: 9px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-}
-
-.render-open-link {
-  font-size: 11px;
-  color: var(--text-dim);
-  text-decoration: none;
-  background: rgba(255, 255, 255, 0.05);
-  padding: 4px 10px;
-  border-radius: 4px;
-}
-
-.render-open-link:hover {
-  color: var(--primary);
-}
-
-.render-meta {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 20px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-  background: rgba(255, 255, 255, 0.02);
-  font-size: 11px;
-}
-
-.render-meta-label {
-  color: var(--text-dim);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.render-meta-value {
-  min-width: 0;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.render-frame {
-  width: 100%;
-  height: 600px;
-  border: none;
-  background: #000;
+.rich-preview-sandbox iframe {
   display: block;
+  max-width: 100%;
+}
+
+.rich-preview-header {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rich-preview-header a {
+  flex-shrink: 0;
 }
 
 .code-block-container {
