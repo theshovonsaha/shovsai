@@ -49,17 +49,9 @@ def _get_token_encoding():
         return tiktoken.get_encoding("cl100k_base")
     except Exception:
         try:
-            return tiktoken.encoding_for_model("gpt-4o-mini")
+            return tiktoken.get_encoding("o200k_base")
         except Exception:
-            class _FallbackEncoding:
-                @staticmethod
-                def encode(text: str):
-                    return list(text or "")
-
-                @staticmethod
-                def decode(tokens):
-                    return "".join(tokens)
-            return _FallbackEncoding()
+            return None
 
 def _truncate_for_model(content: str, model: str) -> str:
     """Truncate tool result to fit within the model's token context limit."""
@@ -69,19 +61,26 @@ def _truncate_for_model(content: str, model: str) -> str:
     # Tool results should only take up at most 70% of the total budget 
     # to leave room for history/system prompts.
     safe_tool_limit = int(limit * 0.70)
-    tokens = encoding.encode(content)
+    if encoding is None:
+        # Approximate 1 token ~= 4 chars if tokenizer isn't available.
+        safe_chars = safe_tool_limit * 4
+        if len(content) <= safe_chars:
+            return content
+        keep = int(safe_chars * 0.45)
+        prefix = content[:keep]
+        suffix = content[-keep:]
+    else:
+        tokens = encoding.encode(content)
+        if len(tokens) <= safe_tool_limit:
+            return content
+        keep = int(safe_tool_limit * 0.45)
+        prefix = encoding.decode(tokens[:keep])
+        suffix = encoding.decode(tokens[-keep:])
+        truncated_amount = len(tokens) - safe_tool_limit
+        return f"{prefix}\n\n[...Token Budget Exceeded: {truncated_amount} tokens truncated...]\n\n{suffix}"
     
-    if len(tokens) <= safe_tool_limit:
-        return content
-    
-    keep = safe_tool_limit // 2
-        
-    # Smart truncation: keep first 45% and last 45% of tokens
-    keep = int(safe_tool_limit * 0.45)
-    prefix = encoding.decode(tokens[:keep])
-    suffix = encoding.decode(tokens[-keep:])
-    
-    return f"{prefix}\n\n[...Token Budget Exceeded: {len(tokens) - safe_tool_limit} tokens truncated...]\n\n{suffix}"
+    truncated_amount = len(content) - safe_chars
+    return f"{prefix}\n\n[...Token Budget Exceeded: ~{truncated_amount} chars truncated...]\n\n{suffix}"
 
 def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
     """
@@ -93,6 +92,9 @@ def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
     limit = TOKEN_SAFETY_LIMITS.get(model, TOKEN_SAFETY_LIMITS["_default"])
     
     def total_tokens(msgs):
+        if encoding is None:
+            # Approximation fallback: ~1 token per 4 chars.
+            return sum(len(m.get("content", "")) // 4 for m in msgs)
         return sum(len(encoding.encode(m["content"])) for m in msgs)
 
     # If already safe, return
@@ -103,13 +105,22 @@ def _enforce_total_budget(messages: list[dict], model: str) -> list[dict]:
 
     # 1. Truncate the combined system message (context/RAG/tools) first if it's huge
     if messages and messages[0]["role"] == "system":
-        sys_tokens = encoding.encode(messages[0]["content"])
-        if len(sys_tokens) > limit * 0.6:
-            # Keep first 30% and last 30% of system prompt
-            keep = int(limit * 0.3)
-            prefix = encoding.decode(sys_tokens[:keep])
-            suffix = encoding.decode(sys_tokens[-keep:])
-            messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
+        if encoding is None:
+            sys_content = messages[0]["content"]
+            sys_limit_chars = int(limit * 0.6) * 4
+            if len(sys_content) > sys_limit_chars:
+                keep_chars = int(limit * 0.3) * 4
+                prefix = sys_content[:keep_chars]
+                suffix = sys_content[-keep_chars:]
+                messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
+        else:
+            sys_tokens = encoding.encode(messages[0]["content"])
+            if len(sys_tokens) > limit * 0.6:
+                # Keep first 30% and last 30% of system prompt
+                keep = int(limit * 0.3)
+                prefix = encoding.decode(sys_tokens[:keep])
+                suffix = encoding.decode(sys_tokens[-keep:])
+                messages[0]["content"] = f"{prefix}\n\n[...System Context Truncated...]\n\n{suffix}"
 
     # 2. If still over, drop oldest non-user messages from sliding window (middle of list)
     # We keep the first system message (index 0) and the last user message (index -1)
@@ -984,7 +995,7 @@ class AgentCore:
             tools_lines = "\n".join(f"{i+1}. {name}" for i, name in enumerate(forced_tools))
             parts.append(
                 "--- TOOL OVERRIDE ---\n"
-                "COMMAND: You MUST use the following tools in this exact order before finalizing your answer:\n"
+                "COMMAND: Use the following tools in the order listed below when there are dependencies between them.\n"
                 f"{tools_lines}\n"
                 "Do not provide a final answer until you have processed the results from these tools.\n"
                 "--- END OVERRIDE ---"

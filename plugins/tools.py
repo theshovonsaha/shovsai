@@ -1006,21 +1006,27 @@ STORE_MEMORY_TOOL = Tool(
     tags=["memory", "core"]
 )
 
-async def _query_memory(topic: str, _session_id: Optional[str] = None) -> str:
+async def _query_memory(
+    topic: str,
+    session_id: Optional[str] = None,
+    **kwargs,
+) -> str:
     """Traverse the semantic graph memory for facts related to a topic."""
     from memory.semantic_graph import SemanticGraph
     try:
         graph = SemanticGraph()
         results = await graph.traverse(topic, top_k=5)
         deterministic_facts = []
-        if _session_id:
-            deterministic_facts = graph.get_current_facts(_session_id)
+        active_session_id = session_id or kwargs.get("_session_id")
+        if active_session_id:
+            deterministic_facts = graph.get_current_facts(active_session_id)
             if deterministic_facts:
                 topic_l = topic.lower()
+                topic_terms = {tok for tok in topic_l.split() if tok}
                 filtered = []
                 for s, p, o in deterministic_facts:
                     joined = f"{s} {p} {o}".lower()
-                    if topic_l in joined or any(tok in joined for tok in topic_l.split()):
+                    if topic_l in joined or any(tok in joined for tok in topic_terms):
                         filtered.append((s, p, o))
                 if filtered:
                     deterministic_facts = filtered

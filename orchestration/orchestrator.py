@@ -57,7 +57,7 @@ class AgenticOrchestrator:
         model: str = "llama3.1:8b",
         session_has_history: bool = False,
         current_fact_count: int = 0,
-        failed_tools: Optional[list[str]] = None,
+        failed_tools: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Analyze query and return structured execution guidance."""
         tools_docs = "\n".join([f"- {t['name']}: {t['description']}" for t in tools_list])
@@ -82,7 +82,7 @@ class AgenticOrchestrator:
                 temperature=0.1
             )
 
-            def _normalize_tools(entries: list[Any]) -> list[dict]:
+            def _normalize_tools(entries: List[Any]) -> List[Dict[str, str]]:
                 normalized = []
                 for entry in entries:
                     if isinstance(entry, str):
@@ -98,6 +98,7 @@ class AgenticOrchestrator:
                     if not isinstance(name, str) or name not in known_tools or name in failed_set:
                         continue
                     if priority not in {"high", "medium", "low"}:
+                        log("orch", "plan", f"Invalid planner priority '{priority}' for tool '{name}'. Using medium.", level="warn")
                         priority = "medium"
                     normalized.append({"name": name, "priority": priority, "reason": reason})
                 priority_rank = {"high": 0, "medium": 1, "low": 2}
