@@ -9,67 +9,81 @@ import { ShovsView } from './components/ShovsView';
 import { OptionsPanel } from './components/OptionsPanel';
 import { GuardrailConfirmationModal } from './components/GuardrailConfirmationModal';
 
-const AppViewer = ({ title, path }: { title: string, path: string }) => {
-  return (
-    <div className="v8-app-viewer" style={{
-      width: '100%', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginTop: '12px', background: '#000'
-    }}>
-      <div className="v8-app-header" style={{
-        padding: '8px 16px', background: '#111', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-dim)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ color: 'var(--primary)' }}>◈</span>
-          <span style={{ fontWeight: 600, color: 'var(--text)' }}>{title}</span>
-        </div>
-        <div>
-          <a href={path} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', textDecoration: 'none' }}>open full ↗</a>
-        </div>
-      </div>
-      <iframe src={path} style={{ width: '100%', height: '500px', border: 'none', display: 'block' }} title={title} />
-    </div>
-  );
+const parseToolPayload = (content?: string) => {
+  if (!content) return null;
+
+  try {
+    const trimmed = content.trim();
+    const start = trimmed.indexOf('{');
+    const end = trimmed.lastIndexOf('}');
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(trimmed.substring(start, end + 1));
+    }
+  } catch {
+    // Fall back to plain text rendering
+  }
+
+  return null;
+};
+
+const summarizeToolContent = (type: 'call' | 'result' | 'error', content?: string) => {
+  const payload = parseToolPayload(content);
+  let label = type === 'call' ? 'Calling' : type === 'result' ? 'Returned' : 'Failed';
+  let summary = '';
+  let autoExpand = type === 'error';
+
+  if (type === 'call') {
+    summary = content || 'starting…';
+  } else if (payload?.type === 'web_search_results' && Array.isArray(payload.results)) {
+    label = 'Results Ready';
+    summary = `${payload.results.length} source${payload.results.length === 1 ? '' : 's'} curated`;
+    autoExpand = true;
+  } else if (payload?.type === 'web_fetch_result') {
+    label = payload.error ? 'Fetch Failed' : 'Page Ready';
+    summary = payload.error || payload.url || `${payload.total_length || 0} chars loaded`;
+    autoExpand = true;
+  } else if (payload && (payload.type === 'app_view' || payload.path)) {
+    label = 'Preview Ready';
+    summary = payload.title || payload.path || 'Interactive sandbox preview';
+    autoExpand = true;
+  } else if (content) {
+    summary = content.length > 84 ? `${content.slice(0, 81)}…` : content;
+  }
+
+  return { label, summary, autoExpand };
 };
 
 const ToolEvent = ({ type, tool, content }: { type: 'call' | 'result' | 'error'; tool: string; content?: string }) => {
-  const [expanded, setExpanded] = React.useState(false);
+  const { label, summary, autoExpand } = React.useMemo(() => summarizeToolContent(type, content), [type, content]);
+  const [expanded, setExpanded] = React.useState(autoExpand);
+  const canExpand = Boolean(content);
 
-  let label = type === 'call' ? 'Calling' : type === 'result' ? 'Returned' : 'Failed';
-  let summary = '';
-
-  if (content && type === 'result') {
-    try {
-      const data = JSON.parse(content);
-      if (data.type === 'web_search_results' && data.results) {
-        label = `Found ${data.results.length} results`;
-      } else if (data.type === 'web_fetch_result') {
-        label = data.error ? 'Fetch Failed' : `Fetched ${data.total_length || 0} chars`;
-      } else if (data.status === 'success' && data.type === 'app_view') {
-        // App view special rendering
-        return <AppViewer title={data.title} path={data.path} />;
-      }
-    } catch (e) {
-      // Fallback
+  React.useEffect(() => {
+    if (autoExpand) {
+      setExpanded(true);
     }
-  } else if (content && type === 'call') {
-    summary = content.length > 50 ? content.substring(0, 50) + '...' : content;
-  }
+  }, [autoExpand]);
 
   const icon = type === 'call' ? '⚙' : type === 'result' ? '✓' : '✗';
+  const statusText = type === 'call' ? 'running' : type === 'result' ? 'ready' : 'error';
 
   return (
-    <div className={`tool-event ${type} ${expanded ? 'expanded' : ''}`}>
-      <div className="tool-header" onClick={() => setExpanded(!expanded)}>
+    <div className={`tool-event ${type} ${expanded ? 'expanded' : ''} ${autoExpand ? 'previewable' : ''}`}>
+      <div className="tool-header" onClick={() => canExpand && setExpanded(!expanded)}>
         <span className="tool-icon">{icon}</span>
         <span className="tool-text">
-          <span className="tool-label">{label}</span>
-          <span className="tool-name">{tool}</span>
-          {summary && !expanded && <span className="tool-summary">· {summary}</span>}
+          <span className="tool-title-row">
+            <span className="tool-label">{label}</span>
+            <span className="tool-name">{tool}</span>
+          </span>
+          {summary && <span className="tool-summary">{summary}</span>}
         </span>
-        <span className="tool-toggle">{expanded ? '▴' : '▾'}</span>
+        <span className={`tool-state-badge ${type}`}>{statusText}</span>
+        {canExpand && <span className="tool-toggle">{expanded ? '▴' : '▾'}</span>}
       </div>
-      {expanded && content && (
+      {expanded && canExpand && (
         <div className="tool-details">
-          <RichContentViewer content={content} />
+          <RichContentViewer content={content || ''} />
         </div>
       )}
     </div>
