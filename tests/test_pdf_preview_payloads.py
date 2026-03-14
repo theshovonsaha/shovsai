@@ -45,6 +45,9 @@ async def test_pdf_processor_create_returns_preview_payload(monkeypatch):
     assert payload["action"] == "create"
     assert payload["file"] == "preview/sample output.pdf"
     assert payload["url"] == "/sandbox/preview/sample output.pdf"
+    created = _safe_path("preview/sample output.pdf")
+    if created.exists():
+        created.unlink()
 
 
 @pytest.mark.asyncio
@@ -79,3 +82,5 @@ async def test_pdf_processor_read_returns_preview_payload(monkeypatch):
     assert payload["pages"] == 2
     assert payload["content"] == "hello pdfhello pdf"
     assert payload["path"] == "/sandbox/preview/readme.pdf"
+    if target.exists():
+        target.unlink()
