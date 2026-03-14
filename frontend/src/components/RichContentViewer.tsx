@@ -102,7 +102,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         const pdfPath = rawPdfPath ? encodeURI(rawPdfPath) : '';
         if (!pdfPath) {
             return (
-                <div className="pdf-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                <div className="pdf-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
                     <div style={{ fontWeight: 600, marginBottom: '8px' }}>PDF Preview unavailable</div>
                     <div style={{ fontSize: '13px', opacity: 0.8 }}>
                         The PDF preview path is missing from the tool response.
@@ -111,8 +111,8 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
             );
         }
         return (
-            <div className="pdf-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-                <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+            <div className="pdf-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="rich-preview-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
                     <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '18px' }}>▣</span> {renderData.title || 'PDF PREVIEW'}
                     </span>
@@ -131,7 +131,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
         const appPath = typeof renderData.path === 'string' ? encodeURI(renderData.path) : '';
         if (!appPath) {
             return (
-                <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
+                <div className="html-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--surface2, #1e1e1e)', padding: '16px' }}>
                     <div style={{ fontWeight: 600, marginBottom: '8px' }}>HTML Preview unavailable</div>
                     <div style={{ fontSize: '13px', opacity: 0.8 }}>
                         The app preview path is missing from the tool response.
@@ -140,8 +140,8 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
             );
         }
         return (
-            <div className="html-render-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
-                <div className="render-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
+            <div className="html-render-sandbox rich-preview-sandbox" style={{ margin: '1em 0', borderRadius: '12px', overflow: 'hidden', border: '1px solid var(--border)', boxShadow: '0 8px 30px rgba(0,0,0,0.5)' }}>
+                <div className="rich-preview-header" style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 20px', background: '#0a0a0a', borderBottom: '1px solid var(--border)' }}>
                     <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary)', letterSpacing: '0.02em', display: 'flex', alignItems: 'center', gap: '8px' }}>
                         <span style={{ fontSize: '18px' }}>◈</span> {renderData.title || 'V8 PLATINUM APP'}
                     </span>

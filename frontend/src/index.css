@@ -2330,7 +2330,8 @@ textarea::placeholder {
     padding: 10px;
   }
 
-  .html-render-sandbox iframe {
+  .html-render-sandbox iframe,
+  .pdf-render-sandbox iframe {
     height: 350px !important;
   }
 
@@ -2401,9 +2402,31 @@ textarea::placeholder {
    ══════════════════════════════════════════════════════════════════ */
 
 .html-render-sandbox,
+.pdf-render-sandbox,
 .fetch-result-viewer {
   isolation: isolate;
   contain: layout style;
+}
+
+.rich-preview-sandbox {
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.rich-preview-sandbox iframe {
+  display: block;
+  max-width: 100%;
+}
+
+.rich-preview-header {
+  display: flex;
+  min-width: 0;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.rich-preview-header a {
+  flex-shrink: 0;
 }
 
 /* Code blocks inside rich content areas must not affect global styles */
