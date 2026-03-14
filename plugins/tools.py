@@ -177,18 +177,57 @@ async def _web_search(query: str, num_results: int = 8, backend: str = None, sea
             engine = "duckduckgo"
             results = await _search_duckduckgo(query, num_results)
             
-        return _format_search_results(query, results) if results else f"No results found for: {query} via {engine}."
+        return _format_search_results(query, results, engine=engine) if results else f"No results found for: {query} via {engine}."
     except Exception as e:
         return f"web_search ({engine}) error: {e}"
 
 
-def _format_search_results(query: str, results: list[dict]) -> str:
-    # We return a structured JSON string so the frontend can render nice cards.
-    # We include a brief text prefix so the LLM knows what happened immediately.
+def _normalize_search_results(results: list[dict], max_results: int = 8) -> list[dict]:
+    """Normalize and de-duplicate raw search results for better context quality."""
+    normalized: list[dict] = []
+    seen_urls: set[str] = set()
+
+    for r in results or []:
+        title = str(r.get("title", "")).strip()
+        url = str(r.get("url", "")).strip()
+        snippet = str(r.get("snippet", "")).strip()
+        source = str(r.get("source", "")).strip()
+
+        if not title and not snippet:
+            continue
+        if not snippet:
+            snippet = title
+        snippet = re.sub(r"\s+", " ", snippet).strip()
+        if len(snippet) > 320:
+            snippet = snippet[:317].rstrip() + "..."
+
+        url_key = url.lower().rstrip("/")
+        if url_key and url_key in seen_urls:
+            continue
+        if url_key:
+            seen_urls.add(url_key)
+
+        normalized.append({
+            "title": title or "Untitled",
+            "url": url,
+            "snippet": snippet,
+            "source": source,
+        })
+        if len(normalized) >= max_results:
+            break
+
+    return normalized
+
+
+def _format_search_results(query: str, results: list[dict], engine: str = "unknown") -> str:
+    cleaned = _normalize_search_results(results, max_results=max(1, len(results or [])))
+    context_summary = "\n".join(f"- {item['snippet']}" for item in cleaned[:3])
     return json.dumps({
         "type": "web_search_results",
         "query": query,
-        "results": results
+        "engine": engine,
+        "context_summary": context_summary,
+        "results": cleaned
     })
 
 
