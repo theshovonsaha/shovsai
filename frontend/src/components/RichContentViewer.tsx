@@ -186,7 +186,7 @@ export const RichContentViewer: React.FC<RichContentViewerProps> = ({ content })
                 <iframe
                     src={appPath}
                     title={renderData.title}
-                    style={{ width: '100%', height: '600px', border: 'none', background: '#000' }}
+                    className="render-frame"
                     sandbox="allow-scripts allow-popups allow-same-origin"
                 />
             </div>
