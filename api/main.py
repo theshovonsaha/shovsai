@@ -13,9 +13,14 @@ Changes from v0.5.0:
 
 import json
 import os
+from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 load_dotenv()
+
+# ── Ensure required directories exist (before any module creates DBs/logs) ────
+for _dir in ("logs", "chroma_db", "agent_sandbox"):
+    Path(_dir).mkdir(parents=True, exist_ok=True)
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import StreamingResponse
