@@ -19,8 +19,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Ensure required directories exist (before any module creates DBs/logs) ────
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 for _dir in ("logs", "chroma_db", "agent_sandbox"):
-    Path(_dir).mkdir(parents=True, exist_ok=True)
+    (_PROJECT_ROOT / _dir).mkdir(parents=True, exist_ok=True)
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import StreamingResponse

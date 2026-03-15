@@ -11,9 +11,15 @@ const ROOT = path.resolve(__dirname, '..');
 try {
   execSync('docker compose up -d searxng', { cwd: ROOT, stdio: 'pipe' });
   console.log('✓  SearXNG started via Docker.');
-} catch {
+} catch (err) {
+  const msg = err.stderr ? err.stderr.toString().trim() : err.message;
+  const reason = msg.includes('not found') || msg.includes('not recognized')
+    ? 'Docker is not installed'
+    : msg.includes('Cannot connect') || msg.includes('daemon')
+      ? 'Docker daemon is not running'
+      : 'Docker Compose command failed';
   console.log(
-    '[info] SearXNG/Docker not available — skipping.\n' +
+    `[info] ${reason} — skipping SearXNG.\n` +
     '       Web search will fall back to DuckDuckGo.'
   );
 }
