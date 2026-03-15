@@ -4,13 +4,12 @@
     "description": "Agent Platform v0.6.0 with RAG, MCP, and Docker Sandboxing",
     "main": "index.js",
     "scripts": {
-        "setup": "node scripts/setup.js",
-        "setup:skip-frontend": "node scripts/setup.js --skip-frontend",
-        "dev:backend": "node scripts/start-backend.js",
+        "setup:venv": "python -m venv venv && python -m pip install -r requirements.txt",
+        "dev:backend": "python -m uvicorn api.main:app --reload --host 0.0.0.0 --port 8000",
         "dev:frontend": "cd frontend && npm run dev",
-        "dev:services": "node scripts/start-services.js",
-        "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
-        "dev:full": "npm run dev:services && npm run dev",
+        "dev:services": "docker compose up -d searxng",
+        "dev": "npm run dev:services && concurrently \"npm run dev:backend\" \"npm run dev:frontend\"",
+        "install:all": "npm install && npm run setup:venv && cd frontend && npm install",
         "start": "npm run dev"
     },
     "keywords": [],
